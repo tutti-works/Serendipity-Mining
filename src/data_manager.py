@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Set
 
 from random import Random
+from collections import deque
 
 
 def weighted_choice(items: List[str], weights: List[float], rng: Random) -> str:
@@ -26,6 +27,37 @@ def dedupe_key(axis_id: str, slots: Dict[str, str]) -> str:
     return "|".join(parts)
 
 
+def normalize_vocab_category(cat: str, raw) -> tuple[Dict[str, List[str]], Dict[str, float], bool]:
+    """
+    Returns (tag_to_words, tag_weights, is_tagged)
+    raw can be list[str] (old format) or dict[tag -> list[str]/_weights].
+    """
+    if isinstance(raw, list):
+        return {"default": raw}, {}, False
+    if not isinstance(raw, dict):
+        raise ValueError(f"Unsupported vocab format for category {cat}")
+    weights = {}
+    if "_weights" in raw:
+        weights = {k: float(v) for k, v in (raw.get("_weights") or {}).items()}
+    tag_to_words: Dict[str, List[str]] = {}
+    for tag, words in raw.items():
+        if tag == "_weights":
+            continue
+        if not isinstance(words, list):
+            raise ValueError(f"Vocab tag {tag} in category {cat} must be a list")
+        tag_to_words[tag] = words
+    if not tag_to_words:
+        raise ValueError(f"Vocab category {cat} has no tags/words")
+    return tag_to_words, weights, True
+
+
+def flatten_words(tag_to_words: Dict[str, List[str]]) -> List[str]:
+    words: List[str] = []
+    for lst in tag_to_words.values():
+        words.extend(lst)
+    return words
+
+
 def create_slot_plan(
     axis_templates: Dict[str, dict],
     vocab: Dict[str, List[str]],
@@ -36,10 +68,63 @@ def create_slot_plan(
     dedupe_mode: str,
     seed: int | None,
     profile: str,
+    exclude_keys: Set[str] | None = None,
+    excluded_plans: List[str] | None = None,
+    tag_sampling: Dict[str, object] | None = None,
+    sampling_controls: Dict[str, int] | None = None,
 ) -> List[dict]:
     rng = Random(seed) if seed is not None else Random()
     plan: List[dict] = []
     seen: Set[str] = set()
+    exclude_keys = exclude_keys or set()
+    excluded_plans = excluded_plans or []
+    tag_sampling = tag_sampling or {}
+    sampling_controls = sampling_controls or {}
+    max_repeat_window = int(sampling_controls.get("max_repeat_window", 0))
+    max_repeat_per_token = int(sampling_controls.get("max_repeat_per_token", 0))
+    recent_tokens = deque(maxlen=max_repeat_window) if max_repeat_window > 0 else None
+    token_counts: Dict[str, int] = {}
+
+    # preprocess vocab categories
+    vocab_struct: Dict[str, dict] = {}
+    tag_cursors: Dict[str, int] = {}
+    for cat, raw in vocab.items():
+        tags, weights, is_tagged = normalize_vocab_category(cat, raw)
+        vocab_struct[cat] = {"tags": tags, "weights": weights, "is_tagged": is_tagged}
+        tag_cursors[cat] = 0
+
+    def choose_token(cat: str) -> tuple[str, str | None]:
+        cat_cfg = vocab_struct.get(cat)
+        if not cat_cfg:
+            raise ValueError(f"Vocab category missing: {cat}")
+        tags = cat_cfg["tags"]
+        weights = cat_cfg["weights"]
+        is_tagged = cat_cfg["is_tagged"]
+        mode = (tag_sampling.get("per_category", {}) or {}).get(cat, tag_sampling.get("mode", "off"))
+        if not is_tagged:
+            mode = "off"
+        if mode == "uniform":
+            tag_list = list(tags.keys())
+            cursor = tag_cursors.get(cat, 0)
+            chosen_tag = tag_list[cursor % len(tag_list)]
+            tag_cursors[cat] = cursor + 1
+            words = tags[chosen_tag]
+            word = rng.choice(words)
+            return word, chosen_tag
+        if mode == "weighted":
+            tag_list = list(tags.keys())
+            tag_weights = [weights.get(t, 1.0) for t in tag_list]
+            chosen_tag = weighted_choice(tag_list, tag_weights, rng)
+            word = rng.choice(tags[chosen_tag])
+            return word, chosen_tag
+        # off
+        word = rng.choice(flatten_words(tags))
+        return word, None
+
+    def should_avoid(token: str) -> bool:
+        if recent_tokens is None:
+            return False
+        return token in recent_tokens
 
     weights = []
     for ax in axis_ids:
@@ -51,13 +136,35 @@ def create_slot_plan(
         tmpl = axis_templates[axis_id]
         placeholders = tmpl.get("placeholders") or []
         slots: Dict[str, str] = {}
+        slot_tags: Dict[str, str | None] = {}
         for ph in placeholders:
-            words = vocab.get(ph, [])
-            if not words:
-                raise ValueError(f"Vocab missing for placeholder {ph}")
-            slots[ph] = rng.choice(words)
+            attempts = 0
+            chosen = None
+            chosen_tag = None
+            while attempts < 5:
+                token, ttag = choose_token(ph)
+                if should_avoid(token):
+                    attempts += 1
+                    continue
+                chosen = token
+                chosen_tag = ttag
+                break
+            if chosen is None:
+                token, ttag = choose_token(ph)
+                chosen = token
+                chosen_tag = ttag
+            slots[ph] = chosen
+            if chosen_tag:
+                slot_tags[ph] = chosen_tag
+            token_counts[chosen] = token_counts.get(chosen, 0) + 1
+            if recent_tokens is not None:
+                recent_tokens.append(chosen)
+            if max_repeat_per_token and token_counts[chosen] > max_repeat_per_token:
+                print(f"[warn] token '{chosen}' exceeded max_repeat_per_token={max_repeat_per_token}")
 
         key = dedupe_key(axis_id, slots)
+        if key in exclude_keys:
+            continue
         if dedupe_mode == "strict" and key in seen:
             continue
         seen.add(key)
@@ -74,6 +181,8 @@ def create_slot_plan(
                 "final_prompt": final_prompt,
                 "seed_used": seed,
                 "generation_type": "standard",
+                "excluded_plans": excluded_plans,
+                "slot_tags": slot_tags or None,
             }
         )
         idx += 1
@@ -98,6 +207,10 @@ def load_plan(
     seed: int | None,
     profile: str,
     regen_plan: bool,
+    exclude_keys: Set[str] | None = None,
+    excluded_plans: List[str] | None = None,
+    tag_sampling: Dict[str, object] | None = None,
+    sampling_controls: Dict[str, int] | None = None,
 ) -> List[dict]:
     if path.exists() and not regen_plan:
         raw = path.read_text(encoding="utf-8").splitlines()
@@ -112,6 +225,10 @@ def load_plan(
         dedupe_mode,
         seed,
         profile,
+        exclude_keys,
+        excluded_plans,
+        tag_sampling,
+        sampling_controls,
     )
     save_plan(plan, path)
     return plan

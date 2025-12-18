@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -34,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rerun", type=int, default=0, help="Rerun N successes from manifest (optional)")
     parser.add_argument("--plan-name", type=str, default="plan", help="Plan file name without extension (default: plan)")
     parser.add_argument("--regen-plan", action="store_true", help="Force regenerate plan even if it exists")
+    parser.add_argument("--exclude-plan", action="append", help="Plan name(s) to exclude (comma separated or repeatable)")
     return parser.parse_args()
 
 
@@ -65,6 +67,7 @@ def build_metadata_base(
         "slots": item.get("slots"),
         "generation_type": item.get("generation_type", "standard"),
         "status": "pending",
+        "excluded_plans": item.get("excluded_plans"),
     }
 
 
@@ -124,6 +127,31 @@ def main() -> None:
     target_count = int(cfg.get("target_count", cfg.get("standard_per_combo", 0) or 0))
     dedupe_mode = str(cfg.get("dedupe_mode", "strict"))
 
+    # Exclude plan keys
+    exclude_plan_names: list[str] = []
+    if args.exclude_plan:
+        for entry in args.exclude_plan:
+            exclude_plan_names.extend([name.strip() for name in entry.split(",") if name.strip()])
+    exclude_keys: set[str] = set()
+    if exclude_plan_names and not args.regen_plan and plan_path.exists():
+        print(f"[info] plan exists at {plan_path}, exclude_plan ignored (use --regen-plan to regenerate).")
+    if exclude_plan_names and args.regen_plan:
+        for name in exclude_plan_names:
+            ex_path = output_dir / f"{name}.jsonl"
+            if not ex_path.exists():
+                raise FileNotFoundError(f"exclude plan not found: {ex_path}")
+            lines = ex_path.read_text(encoding="utf-8").splitlines()
+            for line in lines:
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                slots = data.get("slots") or {}
+                key = "|".join(
+                    [data.get("axis_id", "")]
+                    + [f"{k}={v}" for k, v in sorted(slots.items())]
+                )
+                exclude_keys.add(key)
+
     plan = load_plan(
         plan_path,
         axis_templates,
@@ -136,6 +164,8 @@ def main() -> None:
         args.seed,
         profile,
         args.regen_plan,
+        exclude_keys=exclude_keys,
+        excluded_plans=exclude_plan_names if args.regen_plan else [],
     )
     if args.seed is not None and plan_path.exists() and not args.regen_plan:
         print(f"[info] plan exists at {plan_path}, seed {args.seed} ignored; using existing plan.")
