@@ -13,3 +13,18 @@ axis_weights:
   anachronism: 1.0
   abstract_concrete: 1.0
 dedupe_mode: "strict"
+tag_sampling:
+  mode: uniform
+  per_category:
+    OBJECT: uniform
+    MATERIAL: uniform
+    SUBJECT_A: uniform
+    SUBJECT_B: uniform
+    TECH_THING: uniform
+    CONCRETE_THING: uniform
+    ERA_STYLE: off
+    ABSTRACT_CONCEPT: off
+    SCALE: off
+sampling_controls:
+  max_repeat_window: 200
+  max_repeat_per_token: 8

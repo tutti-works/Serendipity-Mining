@@ -35,13 +35,12 @@ python run.py --profile 4cats
 探索用と本番用を分ける例:
 ```bash
 # 探索 plan を生成（再生成強制、seed はこの時だけ効く）
-python run.py --profile 3labs --plan-name explore --regen-plan --seed 123 --dry-run --count 10
+python run.py --profile 4cats --plan-name explore --regen-plan --seed 123 --dry-run --count 10
 # 同じ探索 plan を再利用（seed を指定しても既存 plan を優先）
-python run.py --profile 3labs --plan-name explore --dry-run --count 10
+python run.py --profile 4cats --plan-name explore --dry-run --count 10
 # 本番 plan（軸ウェイトを調整してから再生成）
-python run.py --profile 3labs --plan-name prod --regen-plan --seed 123 --dry-run --count 10
+python run.py --profile 4cats --plan-name prod --regen-plan --exclude-plan explore --seed 123 --dry-run --count 10
 ```
-4cats も同様に `--profile 4cats` で実行可能。
 
 ### 2.3 パラメータ
 - `--plan-name`: 使う plan ファイル名（拡張子不要、デフォルト `plan`）
@@ -55,6 +54,8 @@ profiles/{profile}/config.yaml で制御:
 - `axis_weights`: 軸ごとの比率（合計1.0目安、未指定なら均等）
 - `dedupe_mode`: `strict`（同一 slots を重複させない）/`soft`
 - `global_prompt_suffix`: 全プロンプトに末尾付与（例: `single main subject, minimal clutter...`）
+- `tag_sampling`: タグ付き vocab のサンプリング方法（uniform/weighted/off をカテゴリごとに設定可能）
+- `sampling_controls`: `max_repeat_window` / `max_repeat_per_token` で直近/全体の重複を抑制
 
 ### 2.5 ドメイン注入
 `domain_injection` = `none` / `context` / `context_and_hints`  
@@ -86,6 +87,48 @@ tail -n 5 out/{profile}/manifest.jsonl
 - MATERIAL / OBJECT / LOCATION / ERA_STYLE / ADJ_STATE / NOUN: 最低50、推奨150〜300
 - 4cats 追加: TECH_THING 150〜300, ABSTRACT_CONCEPT 100〜250, CONCRETE_THING 150〜300, SUBJECT_A/SUBJECT_B 150〜300, SCALE 20〜40
 - 形式は snake_case、重複・長文・引用符は避ける（画像内テキスト誘発を防止）
+
+### 5.1 vocab フォーマット例（サブタグ/_weights 対応）
+旧形式（リストのみ）と新形式（タグ分割＋_weights）を両対応:
+```yaml
+OBJECT:
+  - sneaker
+  - glass_beaker
+OBJECT:
+  _weights:
+    everyday: 2.0
+    industrial: 1.0
+  everyday:
+    - sneaker
+    - coffee_mug
+  industrial:
+    - circuit_board
+    - valve_handle
+```
+
+### 5.2 サンプリング設定
+```yaml
+tag_sampling:
+  mode: uniform            # default forカテゴリ未指定
+  per_category:
+    OBJECT: uniform        # uniform | weighted | off
+    MATERIAL: uniform
+    SUBJECT_A: uniform
+    SUBJECT_B: uniform
+    TECH_THING: uniform
+    CONCRETE_THING: uniform
+    ERA_STYLE: off
+    ABSTRACT_CONCEPT: off
+    SCALE: off
+sampling_controls:
+  max_repeat_window: 200   # 直近windowで同一tokenをなるべく避ける（試み）
+  max_repeat_per_token: 8  # plan全体での繰り返し上限（超えると警告）
+```
+
+### 5.3 増量ルール（質重視）
+- 禁止: 固有名詞、長すぎる snake_case、logo/typography/poster など文字を誘発する語、thing/object/stuff など曖昧語
+- 推奨: 視覚特徴が強い名詞、素材は質感が異なるものを分散、抽象は絵にしやすい概念を優先
+- 重複抑制: 同じstemの乱造を避け、タグで分けて均等サンプリング
 
 ---
 

@@ -65,6 +65,7 @@ def build_metadata_base(
         "hints_used": None,
         "vocab_used": item.get("slots"),
         "slots": item.get("slots"),
+        "slot_tags": item.get("slot_tags"),
         "generation_type": item.get("generation_type", "standard"),
         "status": "pending",
         "excluded_plans": item.get("excluded_plans"),
@@ -126,6 +127,8 @@ def main() -> None:
     axis_weights = cfg.get("axis_weights", {})
     target_count = int(cfg.get("target_count", cfg.get("standard_per_combo", 0) or 0))
     dedupe_mode = str(cfg.get("dedupe_mode", "strict"))
+    tag_sampling = cfg.get("tag_sampling", {})
+    sampling_controls = cfg.get("sampling_controls", {})
 
     # Exclude plan keys
     exclude_plan_names: list[str] = []
@@ -166,6 +169,8 @@ def main() -> None:
         args.regen_plan,
         exclude_keys=exclude_keys,
         excluded_plans=exclude_plan_names if args.regen_plan else [],
+        tag_sampling=tag_sampling,
+        sampling_controls=sampling_controls,
     )
     if args.seed is not None and plan_path.exists() and not args.regen_plan:
         print(f"[info] plan exists at {plan_path}, seed {args.seed} ignored; using existing plan.")
