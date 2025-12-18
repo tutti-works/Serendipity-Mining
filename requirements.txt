@@ -1,0 +1,15 @@
+# Serendipity Mining - Dependencies
+# Python 3.10+ required
+
+# Google Gen AI SDK (official)
+# https://github.com/google/genai-python
+google-genai>=1.0.0
+
+# YAML configuration files
+pyyaml>=6.0
+
+# Progress bar
+tqdm>=4.65
+
+# Environment variables (.env file)
+python-dotenv>=1.0
