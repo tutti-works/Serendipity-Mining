@@ -15,6 +15,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "dry_run": False,
     "retry": {"max_retries": 3, "base_delay": 2.0},
     "image_config": {"image_size": "2K"},
+    "global_prompt_suffix": "",
+    "domain_injection": "context_and_hints",  # none | context | context_and_hints
+    "standard_per_combo": 8,
+    "mix_count": 10,
+    "rerun_count": 10,
     "axis_ids": [
         "synesthesia",
         "biomimicry",
@@ -71,6 +76,19 @@ def load_config(path: Path | None = None) -> Dict[str, Any]:
         if isinstance(file_cfg, dict):
             cfg = deep_merge(cfg, file_cfg)
     return cfg
+
+
+def load_profile_config(profile: str) -> Dict[str, Any]:
+    """
+    Merge default config -> base config/config.yaml -> profiles/{profile}/config.yaml.
+    """
+    base_cfg = load_config()
+    profile_path = Path("profiles") / profile / "config.yaml"
+    if profile_path.exists():
+        prof_cfg = load_yaml(profile_path)
+        if isinstance(prof_cfg, dict):
+            return deep_merge(base_cfg, prof_cfg)
+    return base_cfg
 
 
 def require_api_key(dry_run: bool = False) -> str | None:

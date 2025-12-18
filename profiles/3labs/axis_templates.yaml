@@ -1,0 +1,16 @@
+axis_templates:
+  labA_material_object:
+    name: labA_material_object
+    description: 質感と物体の組み合わせ
+    template: "Studio close-up of {OBJECT} made entirely from {MATERIAL}. Centered composition, plain background, no text."
+    placeholders: [OBJECT, MATERIAL]
+  labB_location_style:
+    name: labB_location_style
+    description: 場所と時代/文化の組み合わせ
+    template: "A scene at {LOCATION} rendered in {ERA_STYLE} aesthetic. Centered composition, minimal background, no characters."
+    placeholders: [LOCATION, ERA_STYLE]
+  labC_contradiction:
+    name: labC_contradiction
+    description: 矛盾概念のビジュアル化
+    template: "Visualize {NOUN} embodying the contradictory state {ADJ_STATE}. Centered composition, plain background, no text."
+    placeholders: [ADJ_STATE, NOUN]

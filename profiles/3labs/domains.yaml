@@ -1,0 +1,27 @@
+domains:
+  - bundle: lab_space_alpha
+    domain_id: sterile_suite
+    context: "Minimal lab bay, matte surfaces, soft white lighting."
+    hints: [laminar_flow, clean_bench, specimen_tray, soft_shadows, muted_palette]
+  - bundle: lab_space_alpha
+    domain_id: contrast_bay
+    context: "High contrast lighting, reflective panels, deep blacks."
+    hints: [hard_shadow, rim_light, mirror_panel, specular_pop, single_subject]
+
+  - bundle: lab_space_beta
+    domain_id: field_station
+    context: "Portable instruments, rugged cases, open air."
+    hints: [tripod_mount, pelican_case, tethered_power, cable_loop, distant_horizon]
+  - bundle: lab_space_beta
+    domain_id: warm_atelier
+    context: "Warm tungsten lamps, textured walls, analog meters."
+    hints: [amber_glow, grain_surface, dial_meter, braided_cable, cloth_backdrop]
+
+  - bundle: lab_space_gamma
+    domain_id: observation_deck
+    context: "Glass enclosure, silhouetted skyline, calm dusk."
+    hints: [silhouette, dusk_gradient, wide_window, soft_reflection, central_focus]
+  - bundle: lab_space_gamma
+    domain_id: blueprint_table
+    context: "Blueprint spread, drafting tools, overhead lamp."
+    hints: [drafting_compass, grid_paper, thin_lines, pencil_shade, top_down]

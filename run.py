@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -8,18 +9,15 @@ from typing import Any, Dict
 from tqdm import tqdm
 
 from src.api_client import generate_with_retry, init_client
-from src.config_loader import load_config, load_env, load_yaml, require_api_key
-from src.data_manager import (
-    find_domain,
-    filter_plan,
-    group_domains_by_bundle,
-    load_manifest_by_index,
-    load_manifest_indices,
-    load_plan,
+from src.config_loader import (
+    load_env,
+    load_profile_config,
+    load_yaml,
+    require_api_key,
 )
+from src.data_manager import filter_plan, load_manifest_by_index, load_plan
 from src.image_extractor import extract_images_from_response, extract_response_metadata
 from src.output_handler import append_to_manifest, save_images, save_metadata
-from src.prompt_generator import build_mix_prompt, build_prompt
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,36 +25,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--count", type=int, help="Generate only the first N items of the plan")
     parser.add_argument("--output", type=str, help="Output directory (default: config or ./out)")
     parser.add_argument("--axis", type=str, help="Filter by axis_id")
-    parser.add_argument("--bundle", type=str, help="Filter by bundle id")
     parser.add_argument("--dry-run", action="store_true", help="Build prompts without calling the API or saving files")
     parser.add_argument("--no-save-thoughts", action="store_true", help="Do not save thinking images")
     parser.add_argument("--plan-path", type=str, help="Custom plan.jsonl path")
     parser.add_argument("--manifest-path", type=str, help="Custom manifest.jsonl path")
+    parser.add_argument("--profile", type=str, default="3labs", help="Profile name (e.g., 3labs, 4cats)")
+    parser.add_argument("--seed", type=int, help="Seed for deterministic plan/prompt generation")
+    parser.add_argument("--rerun", type=int, default=0, help="Rerun N successes from manifest (optional)")
+    parser.add_argument("--plan-name", type=str, default="plan", help="Plan file name without extension (default: plan)")
+    parser.add_argument("--regen-plan", action="store_true", help="Force regenerate plan even if it exists")
     return parser.parse_args()
 
 
 def build_metadata_base(
     run_id: str,
     item: dict,
-    domain: dict,
     prompt: str,
     prompt_meta: Dict[str, Any],
     image_size: str,
+    profile: str,
+    plan_name: str,
 ) -> Dict[str, Any]:
     return {
         "run_id": run_id,
+        "profile": profile,
+        "domain_injection": prompt_meta.get("domain_injection"),
+        "plan_name": plan_name,
         "index": item["index"],
         "created_at": datetime.now().isoformat(),
         "model": "gemini-3-pro-image-preview",
         "image_resolution": image_size,
         "axis_id": item["axis_id"],
-        "bundle": item["bundle"],
-        "domain_id": domain["domain_id"],
+        "bundle": None,
+        "domain_id": None,
         "template_text": prompt_meta.get("template_text"),
         "final_prompt": prompt,
-        "hints_used": prompt_meta.get("hints_used"),
-        "vocab_used": prompt_meta.get("vocab_used"),
-        "generation_type": item["generation_type"],
+        "hints_used": None,
+        "vocab_used": item.get("slots"),
+        "slots": item.get("slots"),
+        "generation_type": item.get("generation_type", "standard"),
         "status": "pending",
     }
 
@@ -82,25 +89,60 @@ def handle_error_metadata(metadata: Dict[str, Any], error_info: Dict[str, Any]) 
 def main() -> None:
     load_env()
     args = parse_args()
-    cfg = load_config()
+    profile = args.profile
+    cfg = load_profile_config(profile)
+    rng = random.Random(args.seed) if args.seed is not None else random
+    domain_injection = cfg.get("domain_injection", "context_and_hints")
 
-    output_dir = Path(args.output or cfg.get("output_dir", "./out"))
-    plan_path = Path(args.plan_path) if args.plan_path else output_dir / "plan.jsonl"
+    output_root = Path(args.output or cfg.get("output_dir", "./out"))
+    output_dir = output_root if output_root.name == profile else output_root / profile
+    images_root = output_dir / "images"
+    meta_root = output_dir / "meta"
+    plan_name = args.plan_name
+    plan_path = Path(args.plan_path) if args.plan_path else output_dir / f"{plan_name}.jsonl"
     manifest_path = Path(args.manifest_path) if args.manifest_path else output_dir / "manifest.jsonl"
     dry_run = bool(cfg.get("dry_run")) or args.dry_run
     save_thoughts = bool(cfg.get("save_thoughts", True)) and not args.no_save_thoughts
     image_size = str(cfg.get("image_config", {}).get("image_size", "2K"))
+    global_suffix = str(cfg.get("global_prompt_suffix", "")).strip()
 
     api_key = require_api_key(dry_run=dry_run)
     client = None if dry_run else init_client(api_key)
 
-    domains = load_yaml("data/domains.yaml").get("domains", [])
-    vocab = load_yaml("data/vocab.yaml").get("vocab", {})
-    axis_templates = load_yaml("data/axis_templates.yaml").get("axis_templates", {})
-    domains_by_bundle = group_domains_by_bundle(domains)
+    profile_dir = Path("profiles") / profile
 
-    plan = load_plan(plan_path, domains_by_bundle, cfg.get("axis_ids", []), cfg.get("bundle_ids", []))
-    plan = filter_plan(plan, axis=args.axis, bundle=args.bundle, count=args.count)
+    def load_with_fallback(name: str, key: str):
+        prof_path = profile_dir / name
+        if prof_path.exists():
+            return load_yaml(prof_path).get(key, {})
+        return load_yaml(f"data/{name}").get(key, {})
+
+    vocab = load_with_fallback("vocab.yaml", "vocab")
+    axis_templates = load_with_fallback("axis_templates.yaml", "axis_templates")
+
+    axis_weights = cfg.get("axis_weights", {})
+    target_count = int(cfg.get("target_count", cfg.get("standard_per_combo", 0) or 0))
+    dedupe_mode = str(cfg.get("dedupe_mode", "strict"))
+
+    plan = load_plan(
+        plan_path,
+        axis_templates,
+        vocab,
+        cfg.get("axis_ids", []),
+        target_count,
+        global_suffix,
+        axis_weights,
+        dedupe_mode,
+        args.seed,
+        profile,
+        args.regen_plan,
+    )
+    if args.seed is not None and plan_path.exists() and not args.regen_plan:
+        print(f"[info] plan exists at {plan_path}, seed {args.seed} ignored; using existing plan.")
+    for item in plan:
+        item.setdefault("profile", profile)
+        item.setdefault("generation_type", "standard")
+    plan = filter_plan(plan, axis=args.axis, bundle=None, count=args.count)
 
     if not plan:
         print("No plan items to process. Check filters or plan file.")
@@ -115,14 +157,14 @@ def main() -> None:
         if status == "success":
             fname = meta.get("final_image_filename")
             if fname:
-                fpath = output_dir / meta.get("axis_id", "") / meta.get("bundle", "") / meta.get("domain_id", "") / fname
+                fpath = images_root / meta.get("axis_id", "") / fname
                 return fpath.exists()
             return True
         # 後方互換: status 無しでも error_type が None かつ final_image_filename が存在すれば成功扱い
         if status is None and meta.get("error_type") in (None, "null"):
             fname = meta.get("final_image_filename")
             if fname:
-                fpath = output_dir / meta.get("axis_id", "") / meta.get("bundle", "") / meta.get("domain_id", "") / fname
+                fpath = images_root / meta.get("axis_id", "") / fname
                 return fpath.exists()
             return True
         return False
@@ -136,71 +178,14 @@ def main() -> None:
         if idx in completed_indices:
             continue
 
-        domain = find_domain(domains_by_bundle, item["bundle"], item["domain_id"])
-        if domain is None:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_name = f"{ts}_{idx:04d}_{item['axis_id']}_{item['bundle']}_{item['domain_id']}_error"
-            error_meta = {
-                "error": f"Domain not found: bundle={item['bundle']}, domain_id={item['domain_id']}",
-                "error_type": "MISSING_DOMAIN",
-                "http_status": None,
-                "retry_count": 0,
-            }
-            metadata = build_metadata_base(run_id, item, {"domain_id": item["domain_id"]}, "", {}, image_size)
-            metadata = handle_error_metadata(metadata, error_meta)
-            save_metadata(output_dir / item["axis_id"] / item["bundle"] / item["domain_id"], base_name, metadata)
-            append_to_manifest(manifest_path, metadata)
-            manifest_cache[idx] = metadata
-            continue
-
-        prompt: str
-        prompt_meta: Dict[str, Any]
-
-        if item["generation_type"] == "rerun":
-            source_meta = manifest_cache.get(item.get("source_index"))
-            if not source_meta:
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                base_name = f"{ts}_{idx:04d}_{item['axis_id']}_{item['bundle']}_{domain['domain_id']}_error"
-                error_meta = {
-                    "error": f"source_index {item.get('source_index')} not found for rerun",
-                    "error_type": "MISSING_SOURCE",
-                    "http_status": None,
-                    "retry_count": 0,
-                }
-                metadata = build_metadata_base(run_id, item, domain, "", {}, image_size)
-                metadata = handle_error_metadata(metadata, error_meta)
-                save_metadata(output_dir / item["axis_id"] / item["bundle"] / domain["domain_id"], base_name, metadata)
-                append_to_manifest(manifest_path, metadata)
-                manifest_cache[idx] = metadata
-                continue
-            prompt = source_meta.get("final_prompt", "")
-            prompt_meta = {
-                "template_text": source_meta.get("template_text"),
-                "hints_used": source_meta.get("hints_used"),
-                "vocab_used": source_meta.get("vocab_used"),
-            }
-            if not prompt:
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                base_name = f"{ts}_{idx:04d}_{item['axis_id']}_{item['bundle']}_{domain['domain_id']}_error"
-                error_meta = {
-                    "error": f"Empty final_prompt for source_index {item.get('source_index')}",
-                    "error_type": "MISSING_SOURCE_PROMPT",
-                    "http_status": None,
-                    "retry_count": 0,
-                }
-                metadata = build_metadata_base(run_id, item, domain, prompt, prompt_meta, image_size)
-                metadata = handle_error_metadata(metadata, error_meta)
-                save_metadata(output_dir / item["axis_id"] / item["bundle"] / domain["domain_id"], base_name, metadata)
-                append_to_manifest(manifest_path, metadata)
-                manifest_cache[idx] = metadata
-                continue
-        elif item["generation_type"] == "mix":
-            prompt, prompt_meta = build_mix_prompt(item["axis_pair"], axis_templates, domain, vocab)
-        else:
-            prompt, prompt_meta = build_prompt(item["axis_id"], axis_templates, domain, vocab)
+        prompt = item["final_prompt"]
+        prompt_meta: Dict[str, Any] = {
+            "template_text": item.get("template_text"),
+            "domain_injection": domain_injection,
+        }
 
         if dry_run:
-            print(f"[DRY RUN] index={idx} axis={item['axis_id']} bundle={item['bundle']} domain={domain['domain_id']}")
+            print(f"[DRY RUN] index={idx} axis={item['axis_id']}")
             print(prompt)
             continue
 
@@ -213,14 +198,15 @@ def main() -> None:
         )
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = f"{ts}_{idx:04d}_{item['axis_id']}_{item['bundle']}_{domain['domain_id']}"
-        img_dir = output_dir / item["axis_id"] / item["bundle"] / domain["domain_id"]
+        base_name = f"{ts}_{idx:04d}_{item['axis_id']}"
+        img_dir = images_root / item["axis_id"]
+        meta_dir = meta_root / item["axis_id"]
 
-        metadata = build_metadata_base(run_id, item, domain, prompt, prompt_meta, image_size)
+        metadata = build_metadata_base(run_id, item, prompt, prompt_meta, image_size, profile, plan_name)
 
         if error_info and response is None:
             metadata = handle_error_metadata(metadata, error_info)
-            save_metadata(img_dir, base_name, metadata)
+            save_metadata(meta_dir, base_name, metadata)
             append_to_manifest(manifest_path, metadata)
             manifest_cache[idx] = metadata
             continue
@@ -265,7 +251,7 @@ def main() -> None:
                 },
             )
 
-        save_metadata(img_dir, base_name, metadata)
+        save_metadata(meta_dir, base_name, metadata)
         append_to_manifest(manifest_path, metadata)
         manifest_cache[idx] = metadata
 

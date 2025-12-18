@@ -1,0 +1,15 @@
+output_dir: "./out"
+axis_ids:
+  - mat_object
+  - scale_landscape
+  - anachronism
+  - abstract_concrete
+global_prompt_suffix: "single main subject, minimal clutter, clean composition, no text, no watermark"
+domain_injection: "none"
+target_count: 20
+axis_weights:
+  mat_object: 1.0
+  scale_landscape: 1.0
+  anachronism: 1.0
+  abstract_concrete: 1.0
+dedupe_mode: "strict"

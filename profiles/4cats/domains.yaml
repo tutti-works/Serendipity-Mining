@@ -1,0 +1,36 @@
+domains:
+  - bundle: cat_industrial
+    domain_id: factory_floor
+    context: "Clean industrial hall, diffused daylight."
+    hints: [safety_lines, gantry, polished_concrete, cable_tray, soft_shadows]
+  - bundle: cat_industrial
+    domain_id: rail_yard
+    context: "Open yard, steel tracks, distant signals."
+    hints: [rail_switch, ballast, warning_sign, foggy_air, overhead_line]
+
+  - bundle: cat_nature
+    domain_id: canyon_rim
+    context: "Layered rock, wide sky, sparse vegetation."
+    hints: [rim_light, strata, haze, solitary_tree, long_shadow]
+  - bundle: cat_nature
+    domain_id: tidal_flat
+    context: "Wet sand, low tide reflections, muted palette."
+    hints: [shallow_pool, ripples, distant_horizon, soft_clouds, isolated_subject]
+
+  - bundle: cat_culture
+    domain_id: library_hall
+    context: "High stacks, arched windows, quiet light."
+    hints: [book_spines, aisle, brass_lamp, dust_motes, vanishing_point]
+  - bundle: cat_culture
+    domain_id: old_theater
+    context: "Velvet seats, stage light spill, ornate rails."
+    hints: [proscenium, curtain_fold, balcony, spotlight_cone, wood_grain]
+
+  - bundle: cat_future
+    domain_id: orbital_lounge
+    context: "Wide viewport, planet horizon, calm interior."
+    hints: [glow_strips, reflection_control, floating_debris, clean_lines, silent_atmosphere]
+  - bundle: cat_future
+    domain_id: lunar_outpost
+    context: "Regolith ground, habitat modules, stark contrast."
+    hints: [long_shadows, low_gravity_cues, crisp_edges, visor_reflection, sun_glare]

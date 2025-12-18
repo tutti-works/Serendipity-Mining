@@ -1,79 +1,82 @@
 from __future__ import annotations
 
 import json
-import random
 from pathlib import Path
 from typing import Dict, Iterable, List, Set
 
-
-def group_domains_by_bundle(domains: Iterable[dict]) -> Dict[str, List[dict]]:
-    grouped: Dict[str, List[dict]] = {}
-    for domain in domains:
-        grouped.setdefault(domain["bundle"], []).append(domain)
-    return grouped
+from random import Random
 
 
-def create_generation_plan(
-    domains_by_bundle: Dict[str, List[dict]],
+def weighted_choice(items: List[str], weights: List[float], rng: Random) -> str:
+    assert len(items) == len(weights)
+    total = sum(weights)
+    if total <= 0:
+        return rng.choice(items)
+    r = rng.uniform(0, total)
+    cum = 0.0
+    for item, w in zip(items, weights):
+        cum += w
+        if r <= cum:
+            return item
+    return items[-1]
+
+
+def dedupe_key(axis_id: str, slots: Dict[str, str]) -> str:
+    parts = [axis_id] + [f"{k}={v}" for k, v in sorted(slots.items())]
+    return "|".join(parts)
+
+
+def create_slot_plan(
+    axis_templates: Dict[str, dict],
+    vocab: Dict[str, List[str]],
     axis_ids: List[str],
-    bundle_ids: List[str],
-    mix_count: int = 10,
-    rerun_count: int = 10,
+    target_count: int,
+    global_suffix: str,
+    axis_weights: Dict[str, float] | None,
+    dedupe_mode: str,
+    seed: int | None,
+    profile: str,
 ) -> List[dict]:
+    rng = Random(seed) if seed is not None else Random()
     plan: List[dict] = []
+    seen: Set[str] = set()
+
+    weights = []
+    for ax in axis_ids:
+        weights.append(float(axis_weights.get(ax, 1.0) if axis_weights else 1.0))
+
     idx = 0
-    # Standard 480 (10 axes x 6 bundles x 8 each)
-    for axis_id in axis_ids:
-        for bundle in bundle_ids:
-            domains = list(domains_by_bundle[bundle])
-            random.shuffle(domains)
-            for i in range(8):
-                domain = domains[i % len(domains)]
-                plan.append(
-                    {
-                        "index": idx,
-                        "axis_id": axis_id,
-                        "bundle": bundle,
-                        "domain_id": domain["domain_id"],
-                        "generation_type": "standard",
-                    }
-                )
-                idx += 1
+    while len(plan) < target_count:
+        axis_id = weighted_choice(axis_ids, weights, rng)
+        tmpl = axis_templates[axis_id]
+        placeholders = tmpl.get("placeholders") or []
+        slots: Dict[str, str] = {}
+        for ph in placeholders:
+            words = vocab.get(ph, [])
+            if not words:
+                raise ValueError(f"Vocab missing for placeholder {ph}")
+            slots[ph] = rng.choice(words)
 
-    standard_items = [item for item in plan if item["generation_type"] == "standard"]
+        key = dedupe_key(axis_id, slots)
+        if dedupe_mode == "strict" and key in seen:
+            continue
+        seen.add(key)
 
-    # Mix 10
-    for _ in range(mix_count):
-        pair = random.sample(axis_ids, 2)
-        bundle = random.choice(bundle_ids)
-        domain = random.choice(domains_by_bundle[bundle])
+        prompt_body = tmpl["template"].format(context="", h1="", h2="", **slots)
+        final_prompt = f"{prompt_body} {global_suffix}".strip()
+
         plan.append(
             {
                 "index": idx,
-                "axis_id": f"mix__{pair[0]}__{pair[1]}",
-                "bundle": bundle,
-                "domain_id": domain["domain_id"],
-                "generation_type": "mix",
-                "axis_pair": pair,
+                "profile": profile,
+                "axis_id": axis_id,
+                "slots": slots,
+                "final_prompt": final_prompt,
+                "seed_used": seed,
+                "generation_type": "standard",
             }
         )
         idx += 1
-
-    # Rerun 10
-    rerun_sources = random.sample(standard_items, k=min(rerun_count, len(standard_items)))
-    for src in rerun_sources:
-        plan.append(
-            {
-                "index": idx,
-                "axis_id": src["axis_id"],
-                "bundle": src["bundle"],
-                "domain_id": src["domain_id"],
-                "generation_type": "rerun",
-                "source_index": src["index"],
-            }
-        )
-        idx += 1
-
     return plan
 
 
@@ -85,14 +88,31 @@ def save_plan(plan: List[dict], path: Path) -> None:
 
 def load_plan(
     path: Path,
-    domains_by_bundle: Dict[str, List[dict]],
+    axis_templates: Dict[str, dict],
+    vocab: Dict[str, List[str]],
     axis_ids: List[str],
-    bundle_ids: List[str],
+    target_count: int,
+    global_suffix: str,
+    axis_weights: Dict[str, float] | None,
+    dedupe_mode: str,
+    seed: int | None,
+    profile: str,
+    regen_plan: bool,
 ) -> List[dict]:
-    if path.exists():
+    if path.exists() and not regen_plan:
         raw = path.read_text(encoding="utf-8").splitlines()
         return [json.loads(line) for line in raw if line.strip()]
-    plan = create_generation_plan(domains_by_bundle, axis_ids, bundle_ids)
+    plan = create_slot_plan(
+        axis_templates,
+        vocab,
+        axis_ids,
+        target_count,
+        global_suffix,
+        axis_weights,
+        dedupe_mode,
+        seed,
+        profile,
+    )
     save_plan(plan, path)
     return plan
 

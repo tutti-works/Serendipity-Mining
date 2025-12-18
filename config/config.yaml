@@ -6,6 +6,10 @@ retry:
   base_delay: 2.0
 image_config:
   image_size: "2K"
+domain_injection: "context_and_hints"
+target_count: 0  # unused in profiles; set in profile configs
+axis_weights: {}  # optional; set in profile configs
+dedupe_mode: "strict"
 axis_ids:
   - synesthesia
   - biomimicry

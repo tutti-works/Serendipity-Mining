@@ -1,0 +1,21 @@
+axis_templates:
+  mat_object:
+    name: mat_object
+    description: 材質とオブジェクト
+    template: "Product-style render of {OBJECT} made from {MATERIAL}. Centered composition, plain background, no text."
+    placeholders: [OBJECT, MATERIAL]
+  scale_landscape:
+    name: scale_landscape
+    description: 巨大/微小と風景
+    template: "A scene showing {SUBJECT_A} contrasted with {SUBJECT_B} at {SCALE}. Wide framing, no characters, clear horizon."
+    placeholders: [SCALE, SUBJECT_A, SUBJECT_B]
+  anachronism:
+    name: anachronism
+    description: 時代/文化とテクノロジー
+    template: "Depict {TECH_THING} inserted into {ERA_STYLE} setting. Centered or hero composition, minimal background, no text."
+    placeholders: [TECH_THING, ERA_STYLE]
+  abstract_concrete:
+    name: abstract_concrete
+    description: 抽象概念と具体物
+    template: "Make {CONCRETE_THING} represent the concept of {ABSTRACT_CONCEPT}. lots of negative space, minimal background, no text."
+    placeholders: [ABSTRACT_CONCEPT, CONCRETE_THING]

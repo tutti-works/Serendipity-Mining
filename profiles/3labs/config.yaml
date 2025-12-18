@@ -1,0 +1,13 @@
+output_dir: "./out"
+axis_ids:
+  - labA_material_object
+  - labB_location_style
+  - labC_contradiction
+global_prompt_suffix: "single main subject, minimal clutter, clean composition, no text, no watermark"
+domain_injection: "none"
+target_count: 20
+axis_weights:
+  labA_material_object: 1.0
+  labB_location_style: 1.0
+  labC_contradiction: 1.0
+dedupe_mode: "strict"
