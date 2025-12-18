@@ -1,0 +1,126 @@
+domains:
+  - bundle: bio_medical
+    domain_id: operating_room
+    context: "Sterile operating room, surgical lighting, stainless steel surfaces, calm tension."
+    hints: [sterile_drape, anesthesia_monitor, scalpel, suture, stainless_tray, surgical_mask, iv_pole, cautery_smoke, blue_gown, heart_rate_waveform]
+  - bundle: bio_medical
+    domain_id: pathology_lab
+    context: "Slide scanners, microscopes, labeled biopsy samples, cold white light."
+    hints: [microtome, paraffin_block, slide_rack, pipette_tip, cryostat, histology_stain, barcode_label, specimen_jar, gloves, biosafety_cabinet]
+  - bundle: bio_medical
+    domain_id: dental_clinic
+    context: "Dental chair, overhead lamp, clean ceramic surfaces, small tools neatly arranged."
+    hints: [suction_tip, dental_mirror, curing_light, impression_tray, scaler, cotton_roll, saliva_ejector, autoclave, xray_sensor, lead_apron]
+  - bundle: bio_medical
+    domain_id: rehab_center
+    context: "Physical therapy gym with mats, rails, resistance gear, supportive atmosphere."
+    hints: [balance_ball, parallel_bars, theraband, gait_belt, foam_roller, treatment_table, exercise_bike, posture_mirror, ankle_weight, clip_board]
+  - bundle: bio_medical
+    domain_id: veterinary_surgery
+    context: "Animal surgical suite, warm blankets, anesthesia for pets, stainless tables."
+    hints: [paw_print, anesthesia_circuit, clippers, pulse_oximeter, warming_pad, instrument_pack, sterile_wrap, kennels, iv_catheter, muzzle]
+
+  - bundle: food_scent_chem
+    domain_id: fermentation_lab
+    context: "Fermentation room with jars, crocks, controlled temperature shelves."
+    hints: [airlock, ph_strip, koji_spores, fermentation_crock, bubbler, hygrometer, brine, mother_culture, inoculation_loop, fermentation_log]
+  - bundle: food_scent_chem
+    domain_id: molecular_gastronomy
+    context: "Minimal kitchen lab with siphons, precision scales, liquid nitrogen fog."
+    hints: [siphon_foam, sous_vide_bath, agar_agar, maltodextrin, isomalt, pacojet, ring_mold, nitrous_cartridge, blowtorch, plating_tweezer]
+  - bundle: food_scent_chem
+    domain_id: perfumery
+    context: "Perfumery bench with blotters, essences, glass droppers, dark bottles."
+    hints: [scent_bloter, essential_oil, orris_root, ethanol_beaker, pipette, amber_bottle, accord_wheel, fixative_resin, perfume_strip, olfactory_pyramid]
+  - bundle: food_scent_chem
+    domain_id: dye_works
+    context: "Textile dye studio, vats of pigment, steam, hanging swatches."
+    hints: [indigo_vat, mordant, dye_swatches, dip_tank, shibori_rope, steam_pipe, color_card, ph_meter, drying_rack, resist_paste]
+  - bundle: food_scent_chem
+    domain_id: wet_lab
+    context: "Chemical wet lab with fume hood, glassware, warning labels."
+    hints: [erlenmeyer_flask, burette, safety_goggles, gloves, lab_coat, fume_hood, reagent_bottle, stir_plate, waste_container, chemical_label]
+
+  - bundle: legal_finance
+    domain_id: courtroom
+    context: "Courtroom with judge bench, wooden textures, flags, microphones."
+    hints: [gavel, stenograph, exhibit_folder, sworn_oath, witness_stand, bench_light, court_seal, evidence_bag, bailiff_badge, legal_pad]
+  - bundle: legal_finance
+    domain_id: tax_office
+    context: "Quiet tax office, stacks of forms, calculators, fluorescent lighting."
+    hints: [tax_form, calculator_tape, filing_cabinet, binder_clip, receipt_stack, desk_lamp, audit_stamp, spreadsheet, rubber_stamp, barcode_scanner]
+  - bundle: legal_finance
+    domain_id: insurance_claims
+    context: "Claims processing desk with dual monitors, call headset, paperwork."
+    hints: [claim_number, adjuster_notes, incident_photo, policy_card, denial_letter, call_headset, fraud_flag, checklist, submission_portal, supervisor_stamp]
+  - bundle: legal_finance
+    domain_id: bank_backoffice
+    context: "Bank operations room with secure terminals, teller trays, ledgers."
+    hints: [cash_drawer, dual_auth, vault_door, settlement_report, swift_message, teller_stamp, coin_roller, check_scanner, money_counter, audit_log]
+  - bundle: legal_finance
+    domain_id: contract_review
+    context: "Legal review table with annotated documents, tabs, highlighters."
+    hints: [redline_markup, clause_tag, citation, signature_page, sticky_flag, escrow, indemnity, boilerplate, revision_stamp, footer_initial]
+
+  - bundle: infra_industrial
+    domain_id: container_port
+    context: "Container port cranes, stacked boxes, harbor fog, safety vests."
+    hints: [gantry_crane, twist_lock, reefer_unit, mooring_line, yard_truck, vessel_bow, container_id, lashing_bar, straddle_carrier, nav_light]
+  - bundle: infra_industrial
+    domain_id: railway_signal
+    context: "Railway control room, track diagrams, signal lights, relay racks."
+    hints: [interlocking_panel, block_section, signal_aspect, track_circuit, balise, axle_counter, dispatch_radio, catenary, maintenance_cart, timetable]
+  - bundle: infra_industrial
+    domain_id: power_plant
+    context: "Turbines, control room monitors, industrial piping, warning paint."
+    hints: [steam_turbine, control_panel, cooling_tower, safety_valve, turbine_blade, radiation_badge, pressure_gauge, cable_tray, busbar, outage_log]
+  - bundle: infra_industrial
+    domain_id: construction_site
+    context: "Active construction site with rebar, scaffolding, concrete pour."
+    hints: [rebar_tie, tower_crane, safety_harness, concrete_form, laser_level, hard_hat, survey_tripod, formwork, curing_blanket, site_fence]
+  - bundle: infra_industrial
+    domain_id: waste_processing
+    context: "Waste sorting facility with conveyors, magnets, safety signage."
+    hints: [conveyor_belt, sorting_station, magnetic_separator, baler, compactor, hazard_label, shredder, ppe_sign, odor_control, weighbridge]
+
+  - bundle: ritual_backstage
+    domain_id: tea_ceremony
+    context: "Tea room tatami, low light, ceramic utensils, calm ritual."
+    hints: [chasen, chawan, kensui, fukusa, natsume, kama, hishaku, tatami_edge, scroll, wagashi]
+  - bundle: ritual_backstage
+    domain_id: funeral_parlor
+    context: "Quiet funeral parlor, floral stands, subdued lighting, seating rows."
+    hints: [incense_smoke, condolence_book, urn, black_ribbon, easel_photo, tissue_box, white_lily, memorial_program, silence_sign, casket_handle]
+  - bundle: ritual_backstage
+    domain_id: traditional_craft
+    context: "Workshop for traditional craft, wood smell, hand tools, shavings."
+    hints: [kanna_plane, lacquer_bowl, washi_dry, dye_pot, bamboo_strip, hand_saw, clamp, whetstone, urushi_brush, kintsugi_gold]
+  - bundle: ritual_backstage
+    domain_id: sports_strategy_room
+    context: "Team strategy room with tactics board, projector, jerseys."
+    hints: [formation_board, magnet_marker, whistle, clipboard, video_playback, hydration_bottle, playbook, stopwatch, cone_stack, whiteboard_marker]
+  - bundle: ritual_backstage
+    domain_id: stagecraft_backstage
+    context: "Backstage with rigging, props, cue sheets, blue gels."
+    hints: [fly_system, cue_stack, gaffer_tape, prop_table, stage_weight, lighting_gel, intercom, prompt_book, stage_manager, blackout_curtain]
+
+  - bundle: human_ops
+    domain_id: school_classroom
+    context: "Classroom with desks, chalkboard, posters, daylight."
+    hints: [chalk_dust, attendance_sheet, projector, bulletin_board, workbook, teacher_desk, eraser, lesson_plan, uniform, pencil_case]
+  - bundle: human_ops
+    domain_id: daycare_center
+    context: "Daycare room with mats, toys, cubbies, cheerful decals."
+    hints: [nap_mat, finger_paint, soft_blocks, snack_time, name_tag, puzzle_piece, sanitizer, storybook, stroller, lunchbox]
+  - bundle: human_ops
+    domain_id: elderly_care
+    context: "Nursing home common area, soft chairs, medical carts, warm light."
+    hints: [walker, medication_chart, call_bell, wheelchair, blanket, tv_remote, water_pitcher, vitals_monitor, memory_box, caregiver_badge]
+  - bundle: human_ops
+    domain_id: hiring_center
+    context: "Interview center with laptops, resume piles, neutral decor."
+    hints: [resume_stack, interview_timer, panel_table, candidate_badge, scorecard, projector_screen, waiting_area, water_carafe, phone_screen, hiring_banner]
+  - bundle: human_ops
+    domain_id: call_center
+    context: "Call center floor, headsets, cubicles, live dashboards."
+    hints: [headset, crm_screen, escalation_sheet, ticket_number, mute_button, status_light, break_timer, script_card, supervisor_desk, noise_dampener]

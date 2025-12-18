@@ -1,0 +1,26 @@
+output_dir: "./out"
+save_thoughts: true
+dry_run: false
+retry:
+  max_retries: 3
+  base_delay: 2.0
+image_config:
+  image_size: "2K"
+axis_ids:
+  - synesthesia
+  - biomimicry
+  - literal_interpretation
+  - macro_micro
+  - material_paradox
+  - glitch_contradiction
+  - affordance_inversion
+  - representation_shift
+  - manufacturing_first
+  - procedural_rules
+bundle_ids:
+  - bio_medical
+  - food_scent_chem
+  - legal_finance
+  - infra_industrial
+  - ritual_backstage
+  - human_ops

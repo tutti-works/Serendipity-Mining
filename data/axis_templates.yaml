@@ -1,0 +1,69 @@
+axis_templates:
+  synesthesia:
+    name: Synesthesia
+    description: 感覚を視覚へ翻訳する軸
+    template: "Translate the sensation of {SENSATION} into a vivid scene centered on {SUBJECT}. {context} Use motifs {h1} and {h2} to echo the feeling. Rich textures and atmospheric lighting."
+    placeholders:
+      - SENSATION
+      - SUBJECT
+  biomimicry:
+    name: 生体模倣
+    description: 生物構造を人工物へ写像
+    template: "Design {OBJECT} whose form borrows from {BIO_STRUCTURE}. {context} Integrate hints {h1} and {h2} as subtle structural cues. Technical clarity with studio lighting."
+    placeholders:
+      - OBJECT
+      - BIO_STRUCTURE
+  literal_interpretation:
+    name: 直訳
+    description: 慣用句や比喩を物理化
+    template: "Take the idiom '{IDIOM}' literally as a physical scenario. {context} Emphasize elements {h1} and {h2} to anchor the phrase. Dramatic yet realistic depiction."
+    placeholders:
+      - IDIOM
+  macro_micro:
+    name: スケール崩壊
+    description: 極小と巨大を同時に描写
+    template: "Collapse macro and micro scales around {SUBJECT}. {context} Interleave cutaways featuring {h1} and {h2}. Crisp depth, scientific clarity."
+    placeholders:
+      - SUBJECT
+  material_paradox:
+    name: 材質パラドックス
+    description: 素材と物体の矛盾
+    template: "A product shot of {OBJECT} made entirely from {MATERIAL_OR_STATE}. {context} Motifs {h1} and {h2}. Hyper-detailed material study."
+    placeholders:
+      - OBJECT
+      - MATERIAL_OR_STATE
+  glitch_contradiction:
+    name: グリッチ/矛盾
+    description: 相反する指示を共存させる
+    template: "Render {SUBJECT} in simultaneous styles: {STYLE_A} and {STYLE_B}. {context} Embed contradictory cues {h1} and {h2}. Controlled glitches with a clean silhouette."
+    placeholders:
+      - STYLE_A
+      - STYLE_B
+      - SUBJECT
+  affordance_inversion:
+    name: 機能逆転
+    description: 本来の用途を反転させる
+    template: "Portray {THING} repurposed for {WRONG_FUNCTION}. {context} Highlight {h1} and {h2} to signal the inversion. Practical staging with clear affordances."
+    placeholders:
+      - THING
+      - WRONG_FUNCTION
+  representation_shift:
+    name: 表現形式変換
+    description: 図面/特許/回路/説明書化
+    template: "Document {SUBJECT} as a blueprint-style schematic. {context} Include notations {h1} and {h2}. Flat ink lines, precise labels, no shading."
+    placeholders:
+      - SUBJECT
+  manufacturing_first:
+    name: 制作制約優先
+    description: 作りやすさを先に決める
+    template: "Design {OBJECT} under {CONSTRAINT} fabrication limits first. {context} Show fixtures {h1} and {h2}. Workshop lighting and feasible geometry."
+    placeholders:
+      - OBJECT
+      - CONSTRAINT
+  procedural_rules:
+    name: ルール生成
+    description: 形状ではなくルールを指定
+    template: "Depict {SUBJECT} generated strictly by rules: {RULESET}. {context} Visually show rule motifs {h1} and {h2}. Layered stepwise construction, iterative traces."
+    placeholders:
+      - RULESET
+      - SUBJECT

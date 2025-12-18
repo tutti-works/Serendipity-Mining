@@ -1,0 +1,109 @@
+vocab:
+  OBJECT:
+    - capsule_chair
+    - foldable_drone
+    - modular_toolbox
+    - surgical_cart
+    - rail_signal
+    - aroma_diffuser
+    - kinetic_lamp
+    - bio_filter
+  THING:
+    - vending_machine
+    - park_bench
+    - mailbox
+    - escalator
+    - fire_extinguisher
+    - photocopier
+    - refrigerator
+    - coffee_maker
+  SUBJECT:
+    - urban_night_market
+    - coral_reef_cross_section
+    - surgical_team
+    - freight_train
+    - backstage_crew
+    - botanical_greenhouse
+    - neonatal_unit
+    - data_center
+  MATERIAL_OR_STATE:
+    - molten_glass
+    - aerogel
+    - rusted_iron
+    - compressed_cardboard
+    - braided_carbon_fiber
+    - frozen_foam
+    - ceramic_slurry
+    - translucent_ice
+  SENSATION:
+    - synesthetic_cinnamon_heat
+    - metallic_noise
+    - ozone_breeze
+    - velvet_silence
+    - citrus_flash
+    - low_frequency_hum
+    - menthol_chill
+    - bittersweet_smoke
+  BIO_STRUCTURE:
+    - honeycomb_lattice
+    - fern_spiral
+    - gecko_pad
+    - manta_fin
+    - barnacle_clamp
+    - orchid_bloom
+    - beetle_shell
+    - coral_branching
+  IDIOM:
+    - spill_the_beans
+    - break_the_ice
+    - cat_out_of_the_bag
+    - hold_your_horses
+    - thin_red_line
+    - cloud_nine
+    - back_to_square_one
+    - under_the_weather
+  STYLE_A:
+    - brutalist_diagram
+    - neon_wireframe
+    - sumi_ink
+    - thermal_imaging
+    - glitch_artifact
+    - cyanotype
+    - lino_cut
+    - pointillism
+  STYLE_B:
+    - medical_illustration
+    - retro_blueprint
+    - ukiyoe
+    - infrared_scan
+    - watercolor_wash
+    - clay_render
+    - ascii_glyphs
+    - anodized_gradient
+  WRONG_FUNCTION:
+    - dispense_tickets
+    - brew_coffee
+    - broadcast_radio
+    - project_laser_grid
+    - filter_smoke
+    - sanitize_air
+    - dispense_bandages
+    - fold_clothes
+  CONSTRAINT:
+    - 3d_print_in_one_piece
+    - laser_cut_from_plywood
+    - vacuum_formed_shell
+    - welded_from_flat_bar
+    - folded_sheet_metal
+    - no_fasteners
+    - cnc_milled
+    - injection_mold_draft
+  RULESET:
+    - cellular_automata_rules
+    - l_system_branches
+    - polar_grid_steps
+    - fibonacci_spacing
+    - recursive_subdivision
+    - weaving_pattern
+    - origami_fold_sequence
+    - stepwise_toolpath
