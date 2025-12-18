@@ -9,21 +9,25 @@ def ensure_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def save_images(extracted: Dict[str, object], img_dir: Path, base_name: str, save_thoughts: bool = True) -> Dict[str, List[str]]:
+def save_images(
+    extracted: Dict[str, object], img_dir: Path, base_name: str, save_thoughts: bool = True
+) -> Dict[str, List[str]]:
     ensure_directory(img_dir)
-    final_path = img_dir / f"{base_name}.png"
+    final_filename = f"{base_name}.png"
+    final_path = img_dir / final_filename
     with open(final_path, "wb") as f:
         f.write(extracted["final_image"])
 
-    thought_paths: List[str] = []
+    thought_filenames: List[str] = []
     if save_thoughts:
         for idx, img in enumerate(extracted["thought_images"], start=1):
-            thought_path = img_dir / f"{base_name}_thought_{idx:02d}.png"
+            thought_filename = f"{base_name}_thought_{idx:02d}.png"
+            thought_path = img_dir / thought_filename
             with open(thought_path, "wb") as f:
                 f.write(img)
-            thought_paths.append(str(thought_path))
+            thought_filenames.append(thought_filename)
 
-    return {"final": str(final_path), "thoughts": thought_paths}
+    return {"final": final_filename, "thoughts": thought_filenames}
 
 
 def save_metadata(img_dir: Path, base_name: str, metadata: Dict[str, object]) -> Path:

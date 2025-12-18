@@ -61,9 +61,16 @@ def _constrain_length(text: str, min_len: int = 500, max_len: int = 800) -> str:
             "focus on structured layering, and keep the context anchored in the domain."
         )
         text = text + padding
-    if len(text) > max_len:
-        text = text[:max_len]
-    return text
+    if len(text) <= max_len:
+        return text
+
+    # 末尾を文境界で丸めて品質を維持
+    cutoff = text[: max_len + 1]
+    for punct in [". ", "! ", "? ", "。", "！", "？"]:
+        pos = cutoff.rfind(punct)
+        if pos != -1 and pos + len(punct) >= max_len - 40:
+            return cutoff[: pos + len(punct)].strip()
+    return cutoff[:max_len].rstrip()
 
 
 def build_mix_prompt(

@@ -57,16 +57,19 @@ def build_metadata_base(
         "hints_used": prompt_meta.get("hints_used"),
         "vocab_used": prompt_meta.get("vocab_used"),
         "generation_type": item["generation_type"],
+        "status": "pending",
     }
 
 
 def handle_error_metadata(metadata: Dict[str, Any], error_info: Dict[str, Any]) -> Dict[str, Any]:
     enriched = metadata.copy()
     enriched |= {
+        "status": "error",
         "image_part_index": None,
         "total_image_parts": None,
         "is_thought": None,
         "thought_images_saved": [],
+        "final_image_filename": None,
         "response_metadata": None,
         "error": error_info.get("error"),
         "error_type": error_info.get("error_type"),
@@ -103,8 +106,28 @@ def main() -> None:
         print("No plan items to process. Check filters or plan file.")
         return
 
-    completed_indices = load_manifest_indices(manifest_path)
     manifest_cache = load_manifest_by_index(manifest_path)
+
+    def is_completed(meta: Dict[str, Any]) -> bool:
+        if not meta:
+            return False
+        status = meta.get("status")
+        if status == "success":
+            fname = meta.get("final_image_filename")
+            if fname:
+                fpath = output_dir / meta.get("axis_id", "") / meta.get("bundle", "") / meta.get("domain_id", "") / fname
+                return fpath.exists()
+            return True
+        # 後方互換: status 無しでも error_type が None かつ final_image_filename が存在すれば成功扱い
+        if status is None and meta.get("error_type") in (None, "null"):
+            fname = meta.get("final_image_filename")
+            if fname:
+                fpath = output_dir / meta.get("axis_id", "") / meta.get("bundle", "") / meta.get("domain_id", "") / fname
+                return fpath.exists()
+            return True
+        return False
+
+    completed_indices = {idx for idx, meta in manifest_cache.items() if is_completed(meta)}
 
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -207,10 +230,12 @@ def main() -> None:
             extracted = extract_images_from_response(response)
             saved_paths = save_images(extracted, img_dir, base_name, save_thoughts=save_thoughts)
             metadata |= {
+                "status": "success",
                 "image_part_index": extracted["final_image_index"],
                 "total_image_parts": extracted["total_parts"],
                 "is_thought": False,
                 "thought_images_saved": [Path(p).name for p in saved_paths.get("thoughts", [])],
+                "final_image_filename": saved_paths.get("final"),
                 "response_metadata": resp_meta,
                 "error": None,
                 "error_type": None,
