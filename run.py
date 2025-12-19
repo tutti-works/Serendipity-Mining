@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import random
+import base64
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, List, Tuple
 
 from tqdm import tqdm
 
@@ -19,6 +19,27 @@ from src.config_loader import (
 from src.data_manager import filter_plan, load_manifest_by_index, load_plan
 from src.image_extractor import extract_images_from_response, extract_response_metadata
 from src.output_handler import append_to_manifest, save_images, save_metadata
+
+
+def chunked(seq: List[dict], size: int) -> Iterable[Tuple[int, List[dict]]]:
+    chunk_id = 0
+    for i in range(0, len(seq), size):
+        yield chunk_id, seq[i : i + size]
+        chunk_id += 1
+
+
+def parse_batch_key(key: str) -> Tuple[str | None, str | None, int | None]:
+    """
+    Expected format: profile:plan_name:index
+    """
+    parts = key.split(":")
+    if len(parts) != 3:
+        return None, None, None
+    profile, plan_name, idx_str = parts
+    try:
+        return profile, plan_name, int(idx_str)
+    except ValueError:
+        return profile, plan_name, None
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +57,90 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plan-name", type=str, default="plan", help="Plan file name without extension (default: plan)")
     parser.add_argument("--regen-plan", action="store_true", help="Force regenerate plan even if it exists")
     parser.add_argument("--exclude-plan", action="append", help="Plan name(s) to exclude (comma separated or repeatable)")
+    parser.add_argument("--mode", choices=["sync", "batch"], default="sync", help="sync (default) or batch")
+    parser.add_argument(
+        "--batch-action", choices=["submit", "status", "collect"], help="Batch action: submit, status, collect"
+    )
+    parser.add_argument(
+        "--batch-chunk-size",
+        type=int,
+        default=300,
+        help="Chunk size for batch submit (default 300; smaller to avoid large files)",
+    )
+    parser.add_argument("--batch-force-submit", action="store_true", help="Force re-submit even if jobs exist")
+    parser.add_argument(
+        "--batch-mime-type",
+        type=str,
+        default="application/jsonl",
+        help="MIME type for batch input upload (e.g., application/jsonl or text/plain)",
+    )
     return parser.parse_args()
+
+
+def load_jobs(jobs_path: Path) -> List[dict]:
+    if not jobs_path.exists():
+        return []
+    jobs: List[dict] = []
+    for line in jobs_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            jobs.append(json.loads(line))
+        except Exception:
+            continue
+    return jobs
+
+
+def append_job(jobs_path: Path, job: dict) -> None:
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(jobs_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(job, ensure_ascii=False) + "\n")
+
+
+def decode_image_from_response(response: dict) -> bytes:
+    candidates = response.get("candidates") or []
+    if not candidates:
+        raise ValueError("No candidates in response")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    for part in parts:
+        inline = part.get("inline_data") or part.get("inlineData")
+        if inline and inline.get("data"):
+            return base64.b64decode(inline["data"])
+    raise ValueError("No inline image data found in response")
+
+
+def summarize_counts(plan: List[dict], manifest_cache: Dict[int, dict]) -> None:
+    total = len(plan)
+    success = 0
+    failed = 0
+    for meta in manifest_cache.values():
+        status = meta.get("status")
+        if status == "success":
+            success += 1
+        elif status in ("error", "failed", "failure"):
+            failed += 1
+    pending = total - success - failed
+    print(f"[summary] total={total} success={success} failed={failed} pending={pending}")
+
+
+def is_completed(meta: Dict[str, Any], images_root: Path) -> bool:
+    if not meta:
+        return False
+    status = meta.get("status")
+    if status == "success":
+        fname = meta.get("final_image_filename")
+        if fname:
+            fpath = images_root / meta.get("axis_id", "") / fname
+            return fpath.exists()
+        return True
+    # legacy fallback
+    if status is None and meta.get("error_type") in (None, "null"):
+        fname = meta.get("final_image_filename")
+        if fname:
+            fpath = images_root / meta.get("axis_id", "") / fname
+            return fpath.exists()
+        return True
+    return False
 
 
 def build_metadata_base(
@@ -95,7 +199,6 @@ def main() -> None:
     args = parse_args()
     profile = args.profile
     cfg = load_profile_config(profile)
-    rng = random.Random(args.seed) if args.seed is not None else random
     domain_injection = cfg.get("domain_injection", "context_and_hints")
 
     output_root = Path(args.output or cfg.get("output_dir", "./out"))
@@ -109,6 +212,10 @@ def main() -> None:
     save_thoughts = bool(cfg.get("save_thoughts", True)) and not args.no_save_thoughts
     image_size = str(cfg.get("image_config", {}).get("image_size", "2K"))
     global_suffix = str(cfg.get("global_prompt_suffix", "")).strip()
+    model_name = cfg.get("model", "gemini-3-pro-image-preview")
+
+    if args.mode == "batch" and dry_run:
+        raise ValueError("Batch mode does not support --dry-run.")
 
     api_key = require_api_key(dry_run=dry_run)
     client = None if dry_run else init_client(api_key)
@@ -177,34 +284,253 @@ def main() -> None:
     for item in plan:
         item.setdefault("profile", profile)
         item.setdefault("generation_type", "standard")
-    plan = filter_plan(plan, axis=args.axis, bundle=None, count=args.count)
+    plan_by_index = {item["index"]: item for item in plan}
+    filtered_plan = filter_plan(plan, axis=args.axis, bundle=None, count=args.count)
+
+    manifest_cache = load_manifest_by_index(manifest_path)
+    completed_indices = {idx for idx, meta in manifest_cache.items() if is_completed(meta, images_root)}
+
+    # batch mode handling
+    if args.mode == "batch":
+        if args.batch_action is None:
+            raise ValueError("In batch mode, --batch-action is required (submit|status|collect).")
+        batch_inputs_dir = output_dir / "batch_inputs"
+        batch_outputs_dir = output_dir / "batch_outputs"
+        jobs_path = output_dir / "batches" / f"{plan_name}.jobs.jsonl"
+
+        if args.batch_action == "submit":
+            target_plan = filtered_plan
+            if not target_plan:
+                print("No plan items to submit. Check filters or plan file.")
+                return
+            pending_items = [item for item in target_plan if item["index"] not in completed_indices]
+            if not pending_items:
+                print("All filtered plan items already succeeded; nothing to submit.")
+                return
+            existing_jobs = load_jobs(jobs_path)
+            existing_chunk_ids = {int(j.get("chunk_id", -1)) for j in existing_jobs}
+            for chunk_id, chunk_items in chunked(pending_items, max(args.batch_chunk_size, 1)):
+                if chunk_id in existing_chunk_ids and not args.batch_force_submit:
+                    print(
+                        f"[skip] chunk {chunk_id} already submitted (jobs.jsonl). Use --batch-force-submit to resubmit."
+                    )
+                    continue
+                input_path = batch_inputs_dir / f"{plan_name}__chunk{chunk_id:04d}.jsonl"
+                input_path.parent.mkdir(parents=True, exist_ok=True)
+                lines = []
+                for it in chunk_items:
+                    key = f"{profile}:{plan_name}:{it['index']}"
+                    req = {
+                        "contents": [{"parts": [{"text": it["final_prompt"]}]}],
+                        "generationConfig": {
+                            "responseModalities": ["IMAGE"],
+                            "imageConfig": {"imageSize": image_size},
+                        },
+                    }
+                    lines.append(json.dumps({"key": key, "request": req}, ensure_ascii=False))
+                input_path.write_text("\n".join(lines), encoding="utf-8")
+                try:
+                    uploaded = client.files.upload(path=str(input_path), mime_type=args.batch_mime_type)
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[error] upload failed for chunk {chunk_id}: {exc}\n"
+                        "Try adjusting --batch-mime-type (e.g., text/plain)."
+                    )
+                    continue
+                try:
+                    batch_job = client.batches.create(
+                        model=model_name,
+                        src={"file_name": getattr(uploaded, "name", None) or getattr(uploaded, "file", None)},
+                        config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    try:
+                        batch_job = client.batches.create(
+                            model=model_name,
+                            input=uploaded,
+                            config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
+                        )
+                        print(f"[info] fallback create() signature used for chunk {chunk_id}")
+                    except Exception as exc2:  # noqa: BLE001
+                        print(f"[error] batch create failed for chunk {chunk_id}: {exc2} (orig: {exc})")
+                        continue
+                job_rec = {
+                    "profile": profile,
+                    "plan_name": plan_name,
+                    "chunk_id": chunk_id,
+                    "index_range": [chunk_items[0]["index"], chunk_items[-1]["index"]],
+                    "chunk_count": len(chunk_items),
+                    "input_jsonl_path": str(input_path),
+                    "uploaded_file_name": getattr(uploaded, "name", None) or getattr(uploaded, "file", None),
+                    "batch_name": getattr(batch_job, "name", None),
+                    "created_at": datetime.utcnow().isoformat(),
+                    "model": model_name,
+                    "mime_type": args.batch_mime_type,
+                }
+                append_job(jobs_path, job_rec)
+                print(f"[submit] chunk {chunk_id} -> batch {job_rec['batch_name']}")
+            return
+
+        if args.batch_action == "status":
+            jobs = load_jobs(jobs_path)
+            if not jobs:
+                print(f"No jobs found at {jobs_path}")
+                return
+            for job in jobs:
+                bname = job.get("batch_name")
+                if not bname:
+                    print(f"[warn] job missing batch_name: {job}")
+                    continue
+                try:
+                    batch_info = client.batches.get(name=bname)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[error] status fetch failed for {bname}: {exc}")
+                    continue
+                state = getattr(batch_info, "state", None) or getattr(batch_info, "status", None)
+                print(f"[status] chunk={job.get('chunk_id')} batch={bname} state={state}")
+            return
+
+        if args.batch_action == "collect":
+            jobs = load_jobs(jobs_path)
+            if not jobs:
+                print(f"No jobs found at {jobs_path}")
+                return
+            run_id = f"batch_collect_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            success_new = 0
+            failed_new = 0
+            for job in jobs:
+                bname = job.get("batch_name")
+                if not bname:
+                    print(f"[warn] job missing batch_name: {job}")
+                    continue
+                try:
+                    batch_info = client.batches.get(name=bname)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[error] status fetch failed for {bname}: {exc}")
+                    continue
+                state = getattr(batch_info, "state", None) or getattr(batch_info, "status", None)
+                if state not in ("SUCCEEDED", "COMPLETED"):
+                    print(f"[info] batch {bname} not completed (state={state}), skipping collect.")
+                    continue
+                output_ref = getattr(batch_info, "output", None)
+                output_name = None
+                if output_ref:
+                    output_name = getattr(output_ref, "name", None) or getattr(output_ref, "file", None)
+                if not output_name:
+                    print(f"[warn] batch {bname} has no output reference.")
+                    continue
+                out_path = batch_outputs_dir / f"{plan_name}__chunk{job.get('chunk_id', 0):04d}.jsonl"
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    client.files.download(name=output_name, path=str(out_path))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[error] download failed for {bname}: {exc}")
+                    continue
+
+                with open(out_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        key = data.get("key", "")
+                        k_profile, k_plan, k_idx = parse_batch_key(key)
+                        if k_idx is None:
+                            print(f"[warn] invalid key in output: {key}")
+                            continue
+                        if k_profile and k_profile != profile:
+                            print(f"[warn] profile mismatch for key {key}, skipping")
+                            continue
+                        if k_plan and k_plan != plan_name:
+                            print(f"[warn] plan mismatch for key {key}, skipping")
+                            continue
+                        item = plan_by_index.get(k_idx)
+                        if not item:
+                            print(f"[warn] index {k_idx} not in plan, skipping")
+                            continue
+                        if k_idx in completed_indices:
+                            print(f"[skip] index {k_idx} already success, not overwriting.")
+                            continue
+                        prompt_meta: Dict[str, Any] = {
+                            "template_text": item.get("template_text"),
+                            "domain_injection": domain_injection,
+                        }
+                        metadata = build_metadata_base(
+                            run_id, item, item["final_prompt"], prompt_meta, image_size, profile, plan_name
+                        )
+                        metadata["batch_name"] = bname
+                        metadata["chunk_id"] = job.get("chunk_id")
+                        metadata["batch_key"] = key
+                        img_dir = images_root / item["axis_id"]
+                        meta_dir = meta_root / item["axis_id"]
+                        if data.get("error"):
+                            err = data.get("error")
+                            metadata = handle_error_metadata(
+                                metadata,
+                                {
+                                    "error": err,
+                                    "error_type": "BATCH_ERROR",
+                                    "http_status": None,
+                                    "retry_count": 0,
+                                },
+                            )
+                            save_metadata(meta_dir, f"batch_{k_idx:04d}_{item['axis_id']}", metadata)
+                            append_to_manifest(manifest_path, metadata)
+                            manifest_cache[k_idx] = metadata
+                            failed_new += 1
+                            continue
+                        try:
+                            img_bytes = decode_image_from_response(data.get("response") or {})
+                        except Exception as exc:  # noqa: BLE001
+                            metadata = handle_error_metadata(
+                                metadata,
+                                {
+                                    "error": str(exc),
+                                    "error_type": "NO_IMAGE_DATA",
+                                    "http_status": None,
+                                    "retry_count": 0,
+                                },
+                            )
+                            save_metadata(meta_dir, f"batch_{k_idx:04d}_{item['axis_id']}", metadata)
+                            append_to_manifest(manifest_path, metadata)
+                            manifest_cache[k_idx] = metadata
+                            failed_new += 1
+                            continue
+                        extracted = {"final_image": img_bytes, "thought_images": []}
+                        base_name = f"batch_{k_idx:04d}_{item['axis_id']}"
+                        saved_paths = save_images(extracted, img_dir, base_name, save_thoughts=False)
+                        metadata |= {
+                            "status": "success",
+                            "image_part_index": 0,
+                            "total_image_parts": 1,
+                            "is_thought": False,
+                            "thought_images_saved": [],
+                            "final_image_filename": saved_paths.get("final"),
+                            "response_metadata": {"batch_name": bname, "key": key},
+                            "error": None,
+                            "error_type": None,
+                            "http_status": None,
+                            "retry_count": 0,
+                        }
+                        save_metadata(meta_dir, base_name, metadata)
+                        append_to_manifest(manifest_path, metadata)
+                        manifest_cache[k_idx] = metadata
+                        completed_indices.add(k_idx)
+                        success_new += 1
+            summarize_counts(plan, manifest_cache)
+            print(f"[collect] new_success={success_new} new_failed={failed_new}")
+            return
+
+        raise ValueError(f"Unsupported batch action: {args.batch_action}")
+
+    # sync mode
+    plan = filtered_plan
 
     if not plan:
         print("No plan items to process. Check filters or plan file.")
         return
-
-    manifest_cache = load_manifest_by_index(manifest_path)
-
-    def is_completed(meta: Dict[str, Any]) -> bool:
-        if not meta:
-            return False
-        status = meta.get("status")
-        if status == "success":
-            fname = meta.get("final_image_filename")
-            if fname:
-                fpath = images_root / meta.get("axis_id", "") / fname
-                return fpath.exists()
-            return True
-        # 後方互換: status 無しでも error_type が None かつ final_image_filename が存在すれば成功扱い
-        if status is None and meta.get("error_type") in (None, "null"):
-            fname = meta.get("final_image_filename")
-            if fname:
-                fpath = images_root / meta.get("axis_id", "") / fname
-                return fpath.exists()
-            return True
-        return False
-
-    completed_indices = {idx for idx, meta in manifest_cache.items() if is_completed(meta)}
 
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 

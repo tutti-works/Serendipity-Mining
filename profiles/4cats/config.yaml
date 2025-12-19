@@ -6,7 +6,7 @@ axis_ids:
   - abstract_concrete
 global_prompt_suffix: "single main subject, minimal clutter, clean composition, no text, no watermark"
 domain_injection: "none"
-target_count: 200
+target_count: 3120
 axis_weights:
   mat_object: 1.0
   scale_landscape: 1.0
@@ -27,4 +27,4 @@ tag_sampling:
     SCALE: off
 sampling_controls:
   max_repeat_window: 200
-  max_repeat_per_token: 8
+  max_repeat_per_token: 0

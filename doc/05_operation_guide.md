@@ -144,3 +144,62 @@ sampling_controls:
 - [ ] profile の vocab が十分（推奨数以上）
 - [ ] `target_count` と `axis_weights` が意図どおり
 - [ ] dry-run で {PLACEHOLDER} 残りがないことを確認
+
+---
+
+## 8. Gemini Batch 運用
+### 8.1 CLI
+```bash
+# 提出（chunk分割。既存jobsがある場合は --batch-force-submit で再投入）
+python run.py --profile 4cats --plan-name prod --mode batch --batch-action submit --batch-chunk-size 300
+# 状態確認
+python run.py --profile 4cats --plan-name prod --mode batch --batch-action status
+# 回収（完了済みのみcollectし、画像/meta/manifestに反映）
+python run.py --profile 4cats --plan-name prod --mode batch --batch-action collect
+```
+- `--mode batch` は Gemini Batch API 専用（Vertex Batch ではない）。
+- `--batch-mime-type` はアップロード失敗時に `text/plain` などへ切り替え可能。
+- 入力JSONL 1行のスキーマ: `{"key": "<profile>:<plan_name>:<index>", "request": <GenerateContentRequest>}`  
+  `key` は chunk 跨ぎでも一意。
+
+### 8.2 ファイル制約と運用
+- input JSONL は 1ファイル最大2GB、プロジェクト合計20GB、保持48時間。  
+  -> `--batch-chunk-size` はデフォルト300。出力肥大化を避けるため状況に応じて調整。
+- `submit` 後は 48時間以内に `collect`。失効したら再submitが必要。
+- jobs記録: `out/{profile}/batches/{plan_name}.jobs.jsonl` に `profile, plan_name, chunk_id, index_range, input_jsonl_path, uploaded_file_name, batch_name, created_at, model, mime_type` を追記。
+- 非idempotentのため、jobsがある chunk はデフォルト再submitしない。`--batch-force-submit` を付けると二重生成の恐れがあることをログで明示。
+
+### 8.3 collect の挙動と安全策
+- 出力JSONLはストリーミング処理（全件をメモリに載せない）。
+- `key` から index を復元し、plan と突合して保存先を決定。
+- 既に `status=success` のものは上書きせずスキップ（ログのみ）。
+- 成功: 画像保存 + meta/manifest を `status=success` で追記。  
+  失敗: meta/manifest に `status=failed` / `error` を記録（次回再実行で拾える）。
+- collect 後にサマリを表示（success/failed/pending）。
+
+### 8.4 トラブルシュート
+- upload失敗: `--batch-mime-type text/plain` を試す。
+- 出力参照なし: batch の state が `SUCCEEDED/COMPLETED` か確認。
+- 48時間超過: inputファイル失効の可能性。planを変えずに再submit。
+
+---
+
+## 9. tools スクリプトの使い方
+### 9.1 語彙監査（vocab_audit）
+```bash
+python tools/vocab_audit.py profiles/4cats/vocab.yaml
+```
+- snake_case準拠、重複、禁止語、カテゴリ件数の警告を表示。
+
+### 9.2 偏りチェック（bias_report）
+```bash
+python tools/bias_report.py out/4cats/explore.jsonl
+python tools/bias_report.py out/4cats/explore.jsonl --top 20
+```
+- axis分布、slot_tags分布、トークン頻度（top N）を出力。
+
+### 9.3 plan重複チェック（check_overlap）
+```bash
+python tools/check_overlap.py out/4cats/explore.jsonl out/4cats/prod.jsonl
+```
+- axis_id + slots の重複数を表示（被り0の確認用）。
