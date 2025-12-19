@@ -16,6 +16,10 @@ def iter_image_parts(response) -> Iterable:
     return []
 
 
+def iter_generated_images(response) -> Iterable:
+    return getattr(response, "generated_images", None) or getattr(response, "generatedImages", None) or []
+
+
 def extract_images_from_response(response) -> Dict[str, object]:
     images = []
     for part in iter_image_parts(response):
@@ -27,6 +31,17 @@ def extract_images_from_response(response) -> Dict[str, object]:
         if isinstance(data, str):
             data = base64.b64decode(data)
         images.append(data)
+
+    if not images:
+        for gen in iter_generated_images(response):
+            img = getattr(gen, "image", None)
+            if not img:
+                continue
+            data = getattr(img, "image_bytes", None) or getattr(img, "imageBytes", None)
+            mime = getattr(img, "mime_type", None) or getattr(img, "mimeType", None)
+            if not data or not mime or not str(mime).startswith("image/"):
+                continue
+            images.append(data)
 
     if not images:
         raise ValueError("No image data in response")

@@ -40,6 +40,9 @@ python run.py --profile 4cats --plan-name explore --regen-plan --seed 123 --dry-
 python run.py --profile 4cats --plan-name explore --dry-run --count 10
 # 本番 plan（軸ウェイトを調整してから再生成）
 python run.py --profile 4cats --plan-name prod --regen-plan --exclude-plan explore --seed 123 --dry-run --count 10
+
+# 実生成（少数）
+python run.py --profile 4cats --plan-name explore --count 3
 ```
 
 ### 2.3 パラメータ
@@ -203,3 +206,13 @@ python tools/bias_report.py out/4cats/explore.jsonl --top 20
 python tools/check_overlap.py out/4cats/explore.jsonl out/4cats/prod.jsonl
 ```
 - axis_id + slots の重複数を表示（被り0の確認用）。
+
+### 9.4 エラーメタの退避（move_error_meta）
+```bash
+# dry-run（実移動なし）
+python tools/move_error_meta.py out/4cats/meta out/4cats/meta_errors --dry-run
+# 実行（status=success以外のmeta JSONを移動）
+python tools/move_error_meta.py out/4cats/meta out/4cats/meta_errors
+```
+- `status=success` 以外、または `error` を含む meta JSON を退避。
+- 画像ファイルは移動せず、meta のみ整理する用途。

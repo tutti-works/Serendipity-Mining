@@ -29,13 +29,12 @@ def classify_error(exception: Exception) -> Tuple[str, int | None]:
 
 
 def generate_image(client: genai.Client, prompt: str, image_size: str = "2K"):
+    # gemini-3-pro-image-preview uses generate_content with IMAGE modality.
+    # image_size is kept for metadata but not enforced (model rejects media resolution).
     return client.models.generate_content(
         model="gemini-3-pro-image-preview",
         contents=prompt,
-        config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(image_size=image_size),
-        ),
+        config=types.GenerateContentConfig(responseModalities=["IMAGE"]),
     )
 
 

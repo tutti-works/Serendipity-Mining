@@ -42,6 +42,13 @@ def parse_batch_key(key: str) -> Tuple[str | None, str | None, int | None]:
         return profile, plan_name, None
 
 
+def get_state_name(batch_job: object) -> str:
+    state = getattr(batch_job, "state", None) or getattr(batch_job, "status", None)
+    if state is None:
+        return "UNKNOWN"
+    return getattr(state, "name", None) or str(state)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serendipity Mining image generator")
     parser.add_argument("--count", type=int, help="Generate only the first N items of the plan")
@@ -299,32 +306,49 @@ def main() -> None:
         jobs_path = output_dir / "batches" / f"{plan_name}.jobs.jsonl"
 
         if args.batch_action == "submit":
-            target_plan = filtered_plan
+            target_plan = sorted(filtered_plan, key=lambda item: item["index"])
             if not target_plan:
                 print("No plan items to submit. Check filters or plan file.")
                 return
-            pending_items = [item for item in target_plan if item["index"] not in completed_indices]
-            if not pending_items:
+            if not any(item["index"] not in completed_indices for item in target_plan):
                 print("All filtered plan items already succeeded; nothing to submit.")
                 return
             existing_jobs = load_jobs(jobs_path)
-            existing_chunk_ids = {int(j.get("chunk_id", -1)) for j in existing_jobs}
-            for chunk_id, chunk_items in chunked(pending_items, max(args.batch_chunk_size, 1)):
-                if chunk_id in existing_chunk_ids and not args.batch_force_submit:
+            existing_keys = set()
+            existing_chunk_ids = set()
+            for job in existing_jobs:
+                if job.get("profile") != profile or job.get("plan_name") != plan_name:
+                    continue
+                chunk_id = int(job.get("chunk_id", -1))
+                index_range = job.get("index_range") or []
+                if len(index_range) == 2:
+                    existing_keys.add((chunk_id, (index_range[0], index_range[1])))
+                existing_chunk_ids.add(chunk_id)
+
+            for chunk_id, chunk_items in chunked(target_plan, max(args.batch_chunk_size, 1)):
+                index_range = (chunk_items[0]["index"], chunk_items[-1]["index"])
+                pending_items = [item for item in chunk_items if item["index"] not in completed_indices]
+                if not pending_items:
+                    print(f"[skip] chunk {chunk_id} already all success; nothing to submit.")
+                    continue
+                if (chunk_id, index_range) in existing_keys and not args.batch_force_submit:
                     print(
                         f"[skip] chunk {chunk_id} already submitted (jobs.jsonl). Use --batch-force-submit to resubmit."
                     )
                     continue
+                if chunk_id in existing_chunk_ids and not args.batch_force_submit:
+                    print(
+                        f"[warn] chunk {chunk_id} exists with different index_range; submitting new job for {index_range}."
+                    )
                 input_path = batch_inputs_dir / f"{plan_name}__chunk{chunk_id:04d}.jsonl"
                 input_path.parent.mkdir(parents=True, exist_ok=True)
                 lines = []
-                for it in chunk_items:
+                for it in pending_items:
                     key = f"{profile}:{plan_name}:{it['index']}"
                     req = {
-                        "contents": [{"parts": [{"text": it["final_prompt"]}]}],
-                        "generationConfig": {
-                            "responseModalities": ["IMAGE"],
-                            "imageConfig": {"imageSize": image_size},
+                        "contents": [{"role": "user", "parts": [{"text": it["final_prompt"]}]}],
+                        "generation_config": {
+                            "response_modalities": ["IMAGE"],
                         },
                     }
                     lines.append(json.dumps({"key": key, "request": req}, ensure_ascii=False))
@@ -337,31 +361,43 @@ def main() -> None:
                         "Try adjusting --batch-mime-type (e.g., text/plain)."
                     )
                     continue
+                uploaded_name = getattr(uploaded, "name", None) or getattr(uploaded, "file", None)
                 try:
                     batch_job = client.batches.create(
                         model=model_name,
-                        src={"file_name": getattr(uploaded, "name", None) or getattr(uploaded, "file", None)},
+                        src=uploaded_name,
                         config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
                     )
+                    print(f"[info] batch create primary src={uploaded_name}")
                 except Exception as exc:  # noqa: BLE001
                     try:
                         batch_job = client.batches.create(
                             model=model_name,
-                            input=uploaded,
+                            src={"file_name": uploaded_name},
                             config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
                         )
-                        print(f"[info] fallback create() signature used for chunk {chunk_id}")
+                        print(f"[info] batch create fallback src dict for chunk {chunk_id}")
                     except Exception as exc2:  # noqa: BLE001
-                        print(f"[error] batch create failed for chunk {chunk_id}: {exc2} (orig: {exc})")
-                        continue
+                        try:
+                            batch_job = client.batches.create(
+                                model=model_name,
+                                input=uploaded,
+                                config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
+                            )
+                            print(f"[info] fallback create() signature used for chunk {chunk_id}")
+                        except Exception as exc3:  # noqa: BLE001
+                            print(
+                                f"[error] batch create failed for chunk {chunk_id}: {exc3} (orig: {exc}/{exc2})"
+                            )
+                            continue
                 job_rec = {
                     "profile": profile,
                     "plan_name": plan_name,
                     "chunk_id": chunk_id,
-                    "index_range": [chunk_items[0]["index"], chunk_items[-1]["index"]],
-                    "chunk_count": len(chunk_items),
+                    "index_range": [index_range[0], index_range[1]],
+                    "chunk_count": len(pending_items),
                     "input_jsonl_path": str(input_path),
-                    "uploaded_file_name": getattr(uploaded, "name", None) or getattr(uploaded, "file", None),
+                    "uploaded_file_name": uploaded_name,
                     "batch_name": getattr(batch_job, "name", None),
                     "created_at": datetime.utcnow().isoformat(),
                     "model": model_name,
@@ -376,6 +412,7 @@ def main() -> None:
             if not jobs:
                 print(f"No jobs found at {jobs_path}")
                 return
+            state_counts: Dict[str, int] = {}
             for job in jobs:
                 bname = job.get("batch_name")
                 if not bname:
@@ -386,8 +423,12 @@ def main() -> None:
                 except Exception as exc:  # noqa: BLE001
                     print(f"[error] status fetch failed for {bname}: {exc}")
                     continue
-                state = getattr(batch_info, "state", None) or getattr(batch_info, "status", None)
-                print(f"[status] chunk={job.get('chunk_id')} batch={bname} state={state}")
+                state_name = get_state_name(batch_info)
+                state_counts[state_name] = state_counts.get(state_name, 0) + 1
+                print(f"[status] chunk={job.get('chunk_id')} batch={bname} state={state_name}")
+            if state_counts:
+                summary = ", ".join(f"{k}={v}" for k, v in sorted(state_counts.items()))
+                print(f"[status-summary] {summary}")
             return
 
         if args.batch_action == "collect":
@@ -408,9 +449,9 @@ def main() -> None:
                 except Exception as exc:  # noqa: BLE001
                     print(f"[error] status fetch failed for {bname}: {exc}")
                     continue
-                state = getattr(batch_info, "state", None) or getattr(batch_info, "status", None)
-                if state not in ("SUCCEEDED", "COMPLETED"):
-                    print(f"[info] batch {bname} not completed (state={state}), skipping collect.")
+                state_name = get_state_name(batch_info)
+                if state_name != "JOB_STATE_SUCCEEDED":
+                    print(f"[info] batch {bname} not completed (state={state_name}), skipping collect.")
                     continue
                 output_ref = getattr(batch_info, "output", None)
                 output_name = None
