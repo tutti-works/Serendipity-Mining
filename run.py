@@ -49,26 +49,48 @@ def get_state_name(batch_job: object) -> str:
     return getattr(state, "name", None) or str(state)
 
 
+def is_success_state(state_name: str) -> bool:
+    state_key = (state_name or "").upper()
+    success_states = {"JOB_STATE_SUCCEEDED", "SUCCEEDED", "JOB_STATE_COMPLETED", "COMPLETED"}
+    if state_key in success_states:
+        return True
+    if "JOB_STATE_SUCCEEDED" in state_key or state_key.endswith("SUCCEEDED"):
+        return True
+    if "JOB_STATE_COMPLETED" in state_key or state_key.endswith("COMPLETED"):
+        return True
+    return False
+
+
 def resolve_output_file_name(batch_info: object) -> Tuple[str | None, str | None]:
     dest = getattr(batch_info, "dest", None)
     if dest:
-        file_name = getattr(dest, "file_name", None) or getattr(dest, "fileName", None)
+        file_name = getattr(dest, "file_name", None)
         if file_name:
             return file_name, "dest.file_name"
+        file_name = getattr(dest, "fileName", None)
+        if file_name:
+            return file_name, "dest.fileName"
     output_ref = getattr(batch_info, "output", None)
     if output_ref:
-        file_name = (
-            getattr(output_ref, "name", None)
-            or getattr(output_ref, "file", None)
-            or getattr(output_ref, "file_name", None)
-            or getattr(output_ref, "fileName", None)
-        )
+        file_name = getattr(output_ref, "name", None)
         if file_name:
-            return file_name, "output.*"
+            return file_name, "output.name"
+        file_name = getattr(output_ref, "file", None)
+        if file_name:
+            return file_name, "output.file"
+        file_name = getattr(output_ref, "file_name", None)
+        if file_name:
+            return file_name, "output.file_name"
+        file_name = getattr(output_ref, "fileName", None)
+        if file_name:
+            return file_name, "output.fileName"
+        if isinstance(output_ref, str):
+            return output_ref, "output(str)"
     return None, None
 
 
 def download_to_path(client: object, file_name: str, out_path: Path, batch_name: str, chunk_id: int) -> bool:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         data = client.files.download(file=file_name)
         if isinstance(data, (bytes, bytearray)):
@@ -78,9 +100,22 @@ def download_to_path(client: object, file_name: str, out_path: Path, batch_name:
             out_path.write_bytes(data.data)
             return True
     except TypeError:
-        pass
+        try:
+            data = client.files.download(name=file_name)
+            if isinstance(data, (bytes, bytearray)):
+                out_path.write_bytes(data)
+                return True
+            if hasattr(data, "data") and isinstance(data.data, (bytes, bytearray)):
+                out_path.write_bytes(data.data)
+                return True
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[error] download failed (bytes) batch={batch_name} chunk={chunk_id} file={file_name}: {exc}"
+            )
     except Exception as exc:  # noqa: BLE001
-        print(f"[error] download failed (bytes) batch={batch_name} chunk={chunk_id}: {exc}")
+        print(
+            f"[error] download failed (bytes) batch={batch_name} chunk={chunk_id} file={file_name}: {exc}"
+        )
 
     try:
         client.files.download(file=file_name, path=str(out_path))
@@ -90,20 +125,26 @@ def download_to_path(client: object, file_name: str, out_path: Path, batch_name:
             client.files.download(name=file_name, path=str(out_path))
             return True
         except Exception as exc:  # noqa: BLE001
-            print(f"[error] download failed (path) batch={batch_name} chunk={chunk_id}: {exc}")
+            print(
+                f"[error] download failed (path) batch={batch_name} chunk={chunk_id} file={file_name}: {exc}"
+            )
             return False
     except Exception as exc:  # noqa: BLE001
-        print(f"[error] download failed (path) batch={batch_name} chunk={chunk_id}: {exc}")
+        print(
+            f"[error] download failed (path) batch={batch_name} chunk={chunk_id} file={file_name}: {exc}"
+        )
         return False
 
 
-def upload_jsonl(client: object, input_path: Path, mime_type: str, batch_name: str, chunk_id: int):
+def upload_jsonl(client: object, input_path: Path, *, display_name: str | None, mime_type: str):
     try:
-        if hasattr(types, "UploadFileConfig"):
-            with open(input_path, "rb") as f:
-                return client.files.upload(file=f, config=types.UploadFileConfig(mime_type=mime_type))
-    except Exception as exc:  # noqa: BLE001
-        print(f"[warn] upload(file=..., config=...) failed batch={batch_name} chunk={chunk_id}: {exc}")
+        from google.genai import types as genai_types
+
+        if hasattr(genai_types, "UploadFileConfig"):
+            cfg = genai_types.UploadFileConfig(display_name=display_name, mime_type=mime_type)
+            return client.files.upload(file=str(input_path), config=cfg)
+    except Exception:
+        pass
     return client.files.upload(path=str(input_path), mime_type=mime_type)
 
 
@@ -134,10 +175,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--batch-force-submit", action="store_true", help="Force re-submit even if jobs exist")
     parser.add_argument(
+        "--batch-request-case",
+        choices=["snake", "camel"],
+        default="camel",
+        help="Batch request key style for generation config (default: camel)",
+    )
+    parser.add_argument(
         "--batch-mime-type",
         type=str,
-        default="application/jsonl",
-        help="MIME type for batch input upload (e.g., application/jsonl or text/plain)",
+        default="jsonl",
+        help="MIME type for batch input upload (default: jsonl)",
+    )
+    parser.add_argument(
+        "--batch-collect-limit",
+        type=int,
+        help="Max number of completed batch jobs to collect in one run",
     )
     return parser.parse_args()
 
@@ -160,6 +212,29 @@ def append_job(jobs_path: Path, job: dict) -> None:
     jobs_path.parent.mkdir(parents=True, exist_ok=True)
     with open(jobs_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(job, ensure_ascii=False) + "\n")
+
+
+def load_collected(collected_path: Path) -> set[str]:
+    if not collected_path.exists():
+        return set()
+    names: set[str] = set()
+    for line in collected_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+            name = data.get("batch_name")
+            if name:
+                names.add(name)
+        except Exception:
+            continue
+    return names
+
+
+def append_collected(collected_path: Path, record: dict) -> None:
+    collected_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(collected_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def decode_image_from_response(response: dict) -> bytes:
@@ -214,6 +289,7 @@ def build_metadata_base(
     prompt: str,
     prompt_meta: Dict[str, Any],
     image_size: str,
+    model_name: str,
     profile: str,
     plan_name: str,
 ) -> Dict[str, Any]:
@@ -224,7 +300,7 @@ def build_metadata_base(
         "plan_name": plan_name,
         "index": item["index"],
         "created_at": datetime.now().isoformat(),
-        "model": "gemini-3-pro-image-preview",
+        "model": model_name,
         "image_resolution": image_size,
         "axis_id": item["axis_id"],
         "bundle": None,
@@ -277,7 +353,13 @@ def main() -> None:
     save_thoughts = bool(cfg.get("save_thoughts", True)) and not args.no_save_thoughts
     image_size = str(cfg.get("image_config", {}).get("image_size", "2K"))
     global_suffix = str(cfg.get("global_prompt_suffix", "")).strip()
-    model_name = cfg.get("model", "gemini-3-pro-image-preview")
+    required_model = "gemini-3-pro-image-preview"
+    model_name_raw = str(cfg.get("model", required_model))
+    if model_name_raw not in {required_model, f"models/{required_model}"}:
+        print(f"[warn] model '{model_name_raw}' overridden to '{required_model}' (required).")
+        model_name_raw = required_model
+    model_name_api = f"models/{required_model}"
+    model_name_meta = model_name_api if args.mode == "batch" else required_model
 
     if args.mode == "batch" and dry_run:
         raise ValueError("Batch mode does not support --dry-run.")
@@ -362,6 +444,7 @@ def main() -> None:
         batch_inputs_dir = output_dir / "batch_inputs"
         batch_outputs_dir = output_dir / "batch_outputs"
         jobs_path = output_dir / "batches" / f"{plan_name}.jobs.jsonl"
+        collected_path = output_dir / "batches" / f"{plan_name}.collected.jsonl"
 
         if args.batch_action == "submit":
             target_plan = sorted(filtered_plan, key=lambda item: item["index"])
@@ -403,51 +486,84 @@ def main() -> None:
                 lines = []
                 for it in pending_items:
                     key = f"{profile}:{plan_name}:{it['index']}"
-                    req = {
-                        "contents": [{"role": "user", "parts": [{"text": it["final_prompt"]}]}],
-                        "generationConfig": {
+                    if args.batch_request_case == "camel":
+                        config_key = "generationConfig"
+                        config_body = {
                             "responseModalities": ["IMAGE"],
                             "imageConfig": {"imageSize": image_size},
-                        },
+                        }
+                    else:
+                        config_key = "generation_config"
+                        config_body = {
+                            "response_modalities": ["IMAGE"],
+                            "image_config": {"image_size": image_size},
+                        }
+                    req = {
+                        "contents": [{"role": "user", "parts": [{"text": it["final_prompt"]}]}],
+                        config_key: config_body,
                     }
                     lines.append(json.dumps({"key": key, "request": req}, ensure_ascii=False))
                 input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                try:
-                    uploaded = upload_jsonl(
-                        client,
-                        input_path,
-                        args.batch_mime_type,
-                        batch_name=plan_name,
-                        chunk_id=chunk_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
+                display_name = f"{profile}-{plan_name}-chunk{chunk_id:04d}"
+                mime_candidates = [
+                    args.batch_mime_type,
+                    "jsonl",
+                    "application/jsonl",
+                    "text/plain",
+                ]
+                uploaded = None
+                used_mime = None
+                for mime in mime_candidates:
+                    try:
+                        uploaded = upload_jsonl(client, input_path, display_name=display_name, mime_type=mime)
+                        used_mime = mime
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[warn] upload failed batch={display_name} chunk={chunk_id} mime={mime}: {exc}")
+                        continue
+                if uploaded is None:
                     print(
-                        f"[error] upload failed for chunk {chunk_id}: {exc}\n"
-                        "Try adjusting --batch-mime-type (e.g., text/plain)."
+                        f"[error] upload failed for chunk {chunk_id} (tried mime={mime_candidates})."
                     )
                     continue
-                uploaded_name = getattr(uploaded, "name", None) or getattr(uploaded, "file", None)
+                if isinstance(uploaded, dict):
+                    uploaded_name = (
+                        uploaded.get("name")
+                        or uploaded.get("file")
+                        or uploaded.get("file_name")
+                        or uploaded.get("fileName")
+                    )
+                else:
+                    uploaded_name = (
+                        getattr(uploaded, "name", None)
+                        or getattr(uploaded, "file", None)
+                        or getattr(uploaded, "file_name", None)
+                        or getattr(uploaded, "fileName", None)
+                    )
+                if not uploaded_name:
+                    print(f"[error] upload returned no file name for chunk {chunk_id}; aborting submit.")
+                    continue
                 try:
                     batch_job = client.batches.create(
-                        model=model_name,
+                        model=model_name_api,
                         src=uploaded_name,
-                        config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
+                        config={"display_name": display_name},
                     )
                     print(f"[info] batch create primary src={uploaded_name}")
                 except Exception as exc:  # noqa: BLE001
                     try:
                         batch_job = client.batches.create(
-                            model=model_name,
+                            model=model_name_api,
                             src={"file_name": uploaded_name},
-                            config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
+                            config={"display_name": display_name},
                         )
                         print(f"[info] batch create fallback src dict for chunk {chunk_id}")
                     except Exception as exc2:  # noqa: BLE001
                         try:
                             batch_job = client.batches.create(
-                                model=model_name,
+                                model=model_name_api,
                                 input=uploaded,
-                                config={"display_name": f"{profile}-{plan_name}-chunk{chunk_id:04d}"},
+                                config={"display_name": display_name},
                             )
                             print(f"[info] fallback create() signature used for chunk {chunk_id}")
                         except Exception as exc3:  # noqa: BLE001
@@ -465,8 +581,8 @@ def main() -> None:
                     "uploaded_file_name": uploaded_name,
                     "batch_name": getattr(batch_job, "name", None),
                     "created_at": datetime.utcnow().isoformat(),
-                    "model": model_name,
-                    "mime_type": args.batch_mime_type,
+                    "model": model_name_api,
+                    "mime_type": used_mime,
                 }
                 append_job(jobs_path, job_rec)
                 print(f"[submit] chunk {chunk_id} -> batch {job_rec['batch_name']}")
@@ -477,6 +593,7 @@ def main() -> None:
             if not jobs:
                 print(f"No jobs found at {jobs_path}")
                 return
+            collected_names = load_collected(collected_path)
             state_counts: Dict[str, int] = {}
             for job in jobs:
                 bname = job.get("batch_name")
@@ -490,10 +607,15 @@ def main() -> None:
                     continue
                 state_name = get_state_name(batch_info)
                 state_counts[state_name] = state_counts.get(state_name, 0) + 1
-                print(f"[status] chunk={job.get('chunk_id')} batch={bname} state={state_name}")
+                collected_flag = "yes" if bname in collected_names else "no"
+                print(
+                    f"[status] chunk={job.get('chunk_id')} batch={bname} state={state_name} collected={collected_flag}"
+                )
             if state_counts:
                 summary = ", ".join(f"{k}={v}" for k, v in sorted(state_counts.items()))
                 print(f"[status-summary] {summary}")
+            if collected_names:
+                print(f"[collected] {len(collected_names)} job(s) marked as collected")
             return
 
         if args.batch_action == "collect":
@@ -501,13 +623,22 @@ def main() -> None:
             if not jobs:
                 print(f"No jobs found at {jobs_path}")
                 return
+            collected_names = load_collected(collected_path)
             run_id = f"batch_collect_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             success_new = 0
             failed_new = 0
+            collected_jobs = 0
+            collect_limit = int(args.batch_collect_limit or 0)
             for job in jobs:
+                if collect_limit and collected_jobs >= collect_limit:
+                    print(f"[info] batch collect limit reached ({collect_limit}); stopping.")
+                    break
                 bname = job.get("batch_name")
                 if not bname:
                     print(f"[warn] job missing batch_name: {job}")
+                    continue
+                if bname in collected_names:
+                    print(f"[skip] batch {bname} already collected; skipping.")
                     continue
                 try:
                     batch_info = client.batches.get(name=bname)
@@ -515,7 +646,7 @@ def main() -> None:
                     print(f"[error] status fetch failed for {bname}: {exc}")
                     continue
                 state_name = get_state_name(batch_info)
-                if state_name != "JOB_STATE_SUCCEEDED":
+                if not is_success_state(state_name):
                     print(f"[info] batch {bname} not completed (state={state_name}), skipping collect.")
                     continue
                 output_name, output_source = resolve_output_file_name(batch_info)
@@ -535,6 +666,7 @@ def main() -> None:
                 )
                 if not ok:
                     continue
+                collected_jobs += 1
 
                 with open(out_path, "r", encoding="utf-8") as f:
                     for line in f:
@@ -567,7 +699,14 @@ def main() -> None:
                             "domain_injection": domain_injection,
                         }
                         metadata = build_metadata_base(
-                            run_id, item, item["final_prompt"], prompt_meta, image_size, profile, plan_name
+                            run_id,
+                            item,
+                            item["final_prompt"],
+                            prompt_meta,
+                            image_size,
+                            model_name_meta,
+                            profile,
+                            plan_name,
                         )
                         metadata["batch_name"] = bname
                         metadata["chunk_id"] = job.get("chunk_id")
@@ -628,6 +767,16 @@ def main() -> None:
                         manifest_cache[k_idx] = metadata
                         completed_indices.add(k_idx)
                         success_new += 1
+                collected_names.add(bname)
+                append_collected(
+                    collected_path,
+                    {
+                        "batch_name": bname,
+                        "chunk_id": job.get("chunk_id"),
+                        "collected_at": datetime.utcnow().isoformat(),
+                        "output_path": str(out_path),
+                    },
+                )
             summarize_counts(plan, manifest_cache)
             print(f"[collect] new_success={success_new} new_failed={failed_new}")
             return
@@ -672,7 +821,16 @@ def main() -> None:
         img_dir = images_root / item["axis_id"]
         meta_dir = meta_root / item["axis_id"]
 
-        metadata = build_metadata_base(run_id, item, prompt, prompt_meta, image_size, profile, plan_name)
+        metadata = build_metadata_base(
+            run_id,
+            item,
+            prompt,
+            prompt_meta,
+            image_size,
+            model_name_meta,
+            profile,
+            plan_name,
+        )
 
         if error_info and response is None:
             metadata = handle_error_metadata(metadata, error_info)

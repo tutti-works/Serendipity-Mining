@@ -162,6 +162,8 @@ python run.py --profile 4cats --plan-name prod --mode batch --batch-action colle
 ```
 - `--mode batch` は Gemini Batch API 専用（Vertex Batch ではない）。
 - `--batch-mime-type` はアップロード失敗時に `text/plain` などへ切り替え可能。
+- `--batch-request-case` で request のキー表記（snake/camel）を切り替え可能（デフォルトは camel）。
+- `--batch-collect-limit` で1回の collect で回収するジョブ数を制限可能。
 - 入力JSONL 1行のスキーマ: `{"key": "<profile>:<plan_name>:<index>", "request": <GenerateContentRequest>}`  
   `key` は chunk 跨ぎでも一意。
 
@@ -170,6 +172,7 @@ python run.py --profile 4cats --plan-name prod --mode batch --batch-action colle
   -> `--batch-chunk-size` はデフォルト300。出力肥大化を避けるため状況に応じて調整。
 - `submit` 後は 48時間以内に `collect`。失効したら再submitが必要。
 - jobs記録: `out/{profile}/batches/{plan_name}.jobs.jsonl` に `profile, plan_name, chunk_id, index_range, input_jsonl_path, uploaded_file_name, batch_name, created_at, model, mime_type` を追記。
+- collect済み記録: `out/{profile}/batches/{plan_name}.collected.jsonl` に batch_name/収集時刻を追記（statusで collected= yes/no を表示）。
 - 非idempotentのため、jobsがある chunk はデフォルト再submitしない。`--batch-force-submit` を付けると二重生成の恐れがあることをログで明示。
 
 ### 8.3 collect の挙動と安全策
@@ -179,7 +182,8 @@ python run.py --profile 4cats --plan-name prod --mode batch --batch-action colle
 - 成功: 画像保存 + meta/manifest を `status=success` で追記。  
   失敗: meta/manifest に `status=failed` / `error` を記録（次回再実行で拾える）。
 - collect 後にサマリを表示（success/failed/pending）。
- - SDK差分対策: `dest.file_name` 優先で出力参照を解決し、download は bytes返却型 → path書き込み型の順で試行。
+- SDK差分対策: `dest.file_name` 優先で出力参照を解決し、download は bytes返却型 → path書き込み型の順で試行。
+- upload/download は SDK差分を吸収（uploadは `jsonl` を優先、`application/jsonl` や `text/plain` へフォールバック）。
 
 ### 8.4 トラブルシュート
 - upload失敗: `--batch-mime-type text/plain` を試す。
