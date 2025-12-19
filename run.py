@@ -348,11 +348,12 @@ def main() -> None:
                     req = {
                         "contents": [{"role": "user", "parts": [{"text": it["final_prompt"]}]}],
                         "generation_config": {
-                            "response_modalities": ["IMAGE"],
+                            "responseModalities": ["IMAGE"],
+                            "imageConfig": {"imageSize": image_size},
                         },
                     }
                     lines.append(json.dumps({"key": key, "request": req}, ensure_ascii=False))
-                input_path.write_text("\n".join(lines), encoding="utf-8")
+                input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 try:
                     uploaded = client.files.upload(path=str(input_path), mime_type=args.batch_mime_type)
                 except Exception as exc:  # noqa: BLE001
@@ -453,16 +454,26 @@ def main() -> None:
                 if state_name != "JOB_STATE_SUCCEEDED":
                     print(f"[info] batch {bname} not completed (state={state_name}), skipping collect.")
                     continue
-                output_ref = getattr(batch_info, "output", None)
                 output_name = None
-                if output_ref:
-                    output_name = getattr(output_ref, "name", None) or getattr(output_ref, "file", None)
+                dest = getattr(batch_info, "dest", None)
+                if dest:
+                    output_name = getattr(dest, "file_name", None)
+                    if output_name:
+                        print(f"[info] batch {bname} output source=dest.file_name")
                 if not output_name:
-                    print(f"[warn] batch {bname} has no output reference.")
+                    output_ref = getattr(batch_info, "output", None)
+                    if output_ref:
+                        output_name = getattr(output_ref, "name", None) or getattr(output_ref, "file", None)
+                        if output_name:
+                            print(f"[info] batch {bname} output source=output.*")
+                if not output_name:
+                    print(f"[warn] batch {bname} has no output reference (dest/output).")
                     continue
                 out_path = batch_outputs_dir / f"{plan_name}__chunk{job.get('chunk_id', 0):04d}.jsonl"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
+                    client.files.download(file=output_name, path=str(out_path))
+                except TypeError:
                     client.files.download(name=output_name, path=str(out_path))
                 except Exception as exc:  # noqa: BLE001
                     print(f"[error] download failed for {bname}: {exc}")
