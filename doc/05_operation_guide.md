@@ -179,6 +179,7 @@ python run.py --profile 4cats --plan-name prod --mode batch --batch-action colle
 - 成功: 画像保存 + meta/manifest を `status=success` で追記。  
   失敗: meta/manifest に `status=failed` / `error` を記録（次回再実行で拾える）。
 - collect 後にサマリを表示（success/failed/pending）。
+ - SDK差分対策: `dest.file_name` 優先で出力参照を解決し、download は bytes返却型 → path書き込み型の順で試行。
 
 ### 8.4 トラブルシュート
 - upload失敗: `--batch-mime-type text/plain` を試す。

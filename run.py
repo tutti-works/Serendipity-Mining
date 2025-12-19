@@ -49,6 +49,64 @@ def get_state_name(batch_job: object) -> str:
     return getattr(state, "name", None) or str(state)
 
 
+def resolve_output_file_name(batch_info: object) -> Tuple[str | None, str | None]:
+    dest = getattr(batch_info, "dest", None)
+    if dest:
+        file_name = getattr(dest, "file_name", None) or getattr(dest, "fileName", None)
+        if file_name:
+            return file_name, "dest.file_name"
+    output_ref = getattr(batch_info, "output", None)
+    if output_ref:
+        file_name = (
+            getattr(output_ref, "name", None)
+            or getattr(output_ref, "file", None)
+            or getattr(output_ref, "file_name", None)
+            or getattr(output_ref, "fileName", None)
+        )
+        if file_name:
+            return file_name, "output.*"
+    return None, None
+
+
+def download_to_path(client: object, file_name: str, out_path: Path, batch_name: str, chunk_id: int) -> bool:
+    try:
+        data = client.files.download(file=file_name)
+        if isinstance(data, (bytes, bytearray)):
+            out_path.write_bytes(data)
+            return True
+        if hasattr(data, "data") and isinstance(data.data, (bytes, bytearray)):
+            out_path.write_bytes(data.data)
+            return True
+    except TypeError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"[error] download failed (bytes) batch={batch_name} chunk={chunk_id}: {exc}")
+
+    try:
+        client.files.download(file=file_name, path=str(out_path))
+        return True
+    except TypeError:
+        try:
+            client.files.download(name=file_name, path=str(out_path))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[error] download failed (path) batch={batch_name} chunk={chunk_id}: {exc}")
+            return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[error] download failed (path) batch={batch_name} chunk={chunk_id}: {exc}")
+        return False
+
+
+def upload_jsonl(client: object, input_path: Path, mime_type: str, batch_name: str, chunk_id: int):
+    try:
+        if hasattr(types, "UploadFileConfig"):
+            with open(input_path, "rb") as f:
+                return client.files.upload(file=f, config=types.UploadFileConfig(mime_type=mime_type))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] upload(file=..., config=...) failed batch={batch_name} chunk={chunk_id}: {exc}")
+    return client.files.upload(path=str(input_path), mime_type=mime_type)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serendipity Mining image generator")
     parser.add_argument("--count", type=int, help="Generate only the first N items of the plan")
@@ -347,7 +405,7 @@ def main() -> None:
                     key = f"{profile}:{plan_name}:{it['index']}"
                     req = {
                         "contents": [{"role": "user", "parts": [{"text": it["final_prompt"]}]}],
-                        "generation_config": {
+                        "generationConfig": {
                             "responseModalities": ["IMAGE"],
                             "imageConfig": {"imageSize": image_size},
                         },
@@ -355,7 +413,13 @@ def main() -> None:
                     lines.append(json.dumps({"key": key, "request": req}, ensure_ascii=False))
                 input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 try:
-                    uploaded = client.files.upload(path=str(input_path), mime_type=args.batch_mime_type)
+                    uploaded = upload_jsonl(
+                        client,
+                        input_path,
+                        args.batch_mime_type,
+                        batch_name=plan_name,
+                        chunk_id=chunk_id,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     print(
                         f"[error] upload failed for chunk {chunk_id}: {exc}\n"
@@ -454,29 +518,22 @@ def main() -> None:
                 if state_name != "JOB_STATE_SUCCEEDED":
                     print(f"[info] batch {bname} not completed (state={state_name}), skipping collect.")
                     continue
-                output_name = None
-                dest = getattr(batch_info, "dest", None)
-                if dest:
-                    output_name = getattr(dest, "file_name", None)
-                    if output_name:
-                        print(f"[info] batch {bname} output source=dest.file_name")
-                if not output_name:
-                    output_ref = getattr(batch_info, "output", None)
-                    if output_ref:
-                        output_name = getattr(output_ref, "name", None) or getattr(output_ref, "file", None)
-                        if output_name:
-                            print(f"[info] batch {bname} output source=output.*")
+                output_name, output_source = resolve_output_file_name(batch_info)
+                if output_name and output_source:
+                    print(f"[info] batch {bname} output source={output_source}")
                 if not output_name:
                     print(f"[warn] batch {bname} has no output reference (dest/output).")
                     continue
                 out_path = batch_outputs_dir / f"{plan_name}__chunk{job.get('chunk_id', 0):04d}.jsonl"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    client.files.download(file=output_name, path=str(out_path))
-                except TypeError:
-                    client.files.download(name=output_name, path=str(out_path))
-                except Exception as exc:  # noqa: BLE001
-                    print(f"[error] download failed for {bname}: {exc}")
+                ok = download_to_path(
+                    client,
+                    output_name,
+                    out_path,
+                    batch_name=bname,
+                    chunk_id=int(job.get("chunk_id", 0)),
+                )
+                if not ok:
                     continue
 
                 with open(out_path, "r", encoding="utf-8") as f:
