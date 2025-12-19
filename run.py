@@ -181,6 +181,11 @@ def parse_args() -> argparse.Namespace:
         help="Batch request key style for generation config (default: camel)",
     )
     parser.add_argument(
+        "--batch-resubmit-failed",
+        action="store_true",
+        help="Resubmit only failed items (status=error/failed) in batch mode",
+    )
+    parser.add_argument(
         "--batch-mime-type",
         type=str,
         default="jsonl",
@@ -436,6 +441,11 @@ def main() -> None:
 
     manifest_cache = load_manifest_by_index(manifest_path)
     completed_indices = {idx for idx, meta in manifest_cache.items() if is_completed(meta, images_root)}
+    failed_indices = {
+        idx
+        for idx, meta in manifest_cache.items()
+        if meta.get("status") in ("error", "failed", "failure") or meta.get("error")
+    }
 
     # batch mode handling
     if args.mode == "batch":
@@ -451,7 +461,11 @@ def main() -> None:
             if not target_plan:
                 print("No plan items to submit. Check filters or plan file.")
                 return
-            if not any(item["index"] not in completed_indices for item in target_plan):
+            if args.batch_resubmit_failed:
+                if not any(item["index"] in failed_indices for item in target_plan):
+                    print("No failed items found; nothing to resubmit.")
+                    return
+            elif not any(item["index"] not in completed_indices for item in target_plan):
                 print("All filtered plan items already succeeded; nothing to submit.")
                 return
             existing_jobs = load_jobs(jobs_path)
@@ -468,16 +482,19 @@ def main() -> None:
 
             for chunk_id, chunk_items in chunked(target_plan, max(args.batch_chunk_size, 1)):
                 index_range = (chunk_items[0]["index"], chunk_items[-1]["index"])
-                pending_items = [item for item in chunk_items if item["index"] not in completed_indices]
+                if args.batch_resubmit_failed:
+                    pending_items = [item for item in chunk_items if item["index"] in failed_indices]
+                else:
+                    pending_items = [item for item in chunk_items if item["index"] not in completed_indices]
                 if not pending_items:
                     print(f"[skip] chunk {chunk_id} already all success; nothing to submit.")
                     continue
-                if (chunk_id, index_range) in existing_keys and not args.batch_force_submit:
+                if (chunk_id, index_range) in existing_keys and not (args.batch_force_submit or args.batch_resubmit_failed):
                     print(
                         f"[skip] chunk {chunk_id} already submitted (jobs.jsonl). Use --batch-force-submit to resubmit."
                     )
                     continue
-                if chunk_id in existing_chunk_ids and not args.batch_force_submit:
+                if chunk_id in existing_chunk_ids and not (args.batch_force_submit or args.batch_resubmit_failed):
                     print(
                         f"[warn] chunk {chunk_id} exists with different index_range; submitting new job for {index_range}."
                     )
