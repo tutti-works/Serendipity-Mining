@@ -61,6 +61,14 @@ vocab:
       - pencil_sharpener
       - toy_robot
       - puzzle_cube
+      - soap_dispenser
+      - coffee_dripper
+      - french_press
+      - measuring_cup
+      - colander
+      - mortar_pestle
+      - vegetable_peeler
+      - kitchen_timer
     industrial:
       - circuit_board
       - valve_handle
@@ -121,6 +129,14 @@ vocab:
       - reefer_socket
       - pipe_clamp
       - clamp_meter
+      - terminal_block
+      - din_rail
+      - cable_gland
+      - power_supply_unit
+      - manifold_block
+      - shaft_coupler
+      - check_valve
+      - quick_disconnect
     furniture:
       - folding_chair
       - lounge_chair
@@ -165,6 +181,18 @@ vocab:
       - baker_rack
       - drop_leaf_table
       - folding_desk
+      - coat_rack
+      - magazine_rack
+      - bookshelf_unit
+      - curio_cabinet
+      - drawer_unit
+      - floating_shelf
+      - corner_shelf
+      - entryway_bench
+      - ottoman
+      - footstool
+      - laundry_hamper
+      - mirror_stand
     wearable:
       - wristband
       - watch_strap
@@ -206,6 +234,18 @@ vocab:
       - reflective_band
       - chest_light
       - clip_light
+      - lanyard
+      - id_badge_holder
+      - armband
+      - ankle_brace
+      - compression_sleeve
+      - arm_guard
+      - forearm_guard
+      - hydration_pack
+      - helmet_liner
+      - headlamp_strap
+      - camera_strap
+      - daypack
     tool:
       - torque_wrench
       - ratchet_handle

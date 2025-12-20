@@ -8,10 +8,10 @@ global_prompt_suffix: "single main subject, minimal clutter, clean composition, 
 domain_injection: "none"
 target_count: 3120
 axis_weights:
-  mat_object: 1.0
-  scale_landscape: 1.0
-  anachronism: 1.0
-  abstract_concrete: 1.0
+  mat_object: 0.55
+  scale_landscape: 0.20
+  anachronism: 0.13
+  abstract_concrete: 0.12
 dedupe_mode: "strict"
 tag_sampling:
   mode: uniform

@@ -222,3 +222,11 @@ python tools/move_error_meta.py out/4cats/meta out/4cats/meta_errors
 ```
 - `status=success` 以外、または `error` を含む meta JSON を退避。
 - 画像ファイルは移動せず、meta のみ整理する用途。
+
+### 9.5 画像評価UI（rater_app）
+```bash
+python -m tools.rater_app --profile 4cats --plan-name explore --port 8000
+```
+- 2x2グリッドで 0/1/2 をキーボード評価。
+- 評価は `out/{profile}/ratings/{plan_name}.jsonl` に追記。
+- `/?seed=1234` で表示順を固定。
