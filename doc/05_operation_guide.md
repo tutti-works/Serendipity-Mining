@@ -231,3 +231,13 @@ python -m tools.rater_app --profile 4cats --plan-name explore --port 8000
 - 2x2グリッドで 0/1/2 をキーボード評価。
 - 評価は `out/{profile}/ratings/{plan_name}.jsonl` に追記。
 - `/?seed=1234` で表示順を固定。
+### 9.6 Files API 使用量確認/削除（files_manager）
+```bash
+python tools/files_manager.py --list
+python tools/files_manager.py --delete files/xxxx --yes
+python tools/files_manager.py --delete-older-hours 48 --yes
+python tools/files_manager.py --delete-display-prefix 4cats-explore --yes
+python tools/files_manager.py --delete-older-hours 48 --delete-display-prefix 4cats-explore --yes
+```
+- `--delete-display-prefix` は display_name の前方一致で削除対象を絞り込み。
+- `--yes` がない場合は候補表示のみ、削除はしない。

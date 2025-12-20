@@ -747,6 +747,7 @@ def main() -> None:
                             profile,
                             plan_name,
                         )
+                        base_name = f"batch_{plan_name}_{k_idx:04d}_{item['axis_id']}"
                         metadata["batch_name"] = bname
                         metadata["chunk_id"] = job.get("chunk_id")
                         metadata["batch_key"] = key
@@ -763,7 +764,7 @@ def main() -> None:
                                     "retry_count": 0,
                                 },
                             )
-                            save_metadata(meta_dir, f"batch_{k_idx:04d}_{item['axis_id']}", metadata)
+                            save_metadata(meta_dir, base_name, metadata)
                             append_to_manifest(manifest_path, metadata)
                             manifest_cache[k_idx] = metadata
                             manifest_cache_filtered[k_idx] = metadata
@@ -781,14 +782,13 @@ def main() -> None:
                                     "retry_count": 0,
                                 },
                             )
-                            save_metadata(meta_dir, f"batch_{k_idx:04d}_{item['axis_id']}", metadata)
+                            save_metadata(meta_dir, base_name, metadata)
                             append_to_manifest(manifest_path, metadata)
                             manifest_cache[k_idx] = metadata
                             manifest_cache_filtered[k_idx] = metadata
                             failed_new += 1
                             continue
                         extracted = {"final_image": img_bytes, "thought_images": []}
-                        base_name = f"batch_{k_idx:04d}_{item['axis_id']}"
                         saved_paths = save_images(extracted, img_dir, base_name, save_thoughts=False)
                         metadata |= {
                             "status": "success",
