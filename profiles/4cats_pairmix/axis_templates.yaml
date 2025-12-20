@@ -1,0 +1,36 @@
+axis_templates:
+  pair_obj_subject_a:
+    name: pair_obj_subject_a
+    description: "pair: OBJECT x SUBJECT_A"
+    template: "A surreal concept design merging {OBJECT} and {SUBJECT_A} into one coherent form."
+    placeholders: [OBJECT, SUBJECT_A]
+
+  pair_obj_subject_b:
+    name: pair_obj_subject_b
+    description: "pair: OBJECT x SUBJECT_B"
+    template: "A surreal concept design merging {OBJECT} and {SUBJECT_B} into one coherent form."
+    placeholders: [OBJECT, SUBJECT_B]
+
+  pair_obj_concrete:
+    name: pair_obj_concrete
+    description: "pair: OBJECT x CONCRETE_THING"
+    template: "A surreal concept design merging {OBJECT} and {CONCRETE_THING} into one coherent form."
+    placeholders: [OBJECT, CONCRETE_THING]
+
+  pair_subject_a_b:
+    name: pair_subject_a_b
+    description: "pair: SUBJECT_A x SUBJECT_B"
+    template: "A surreal concept design merging {SUBJECT_A} and {SUBJECT_B} into one coherent form."
+    placeholders: [SUBJECT_A, SUBJECT_B]
+
+  pair_subject_a_concrete:
+    name: pair_subject_a_concrete
+    description: "pair: SUBJECT_A x CONCRETE_THING"
+    template: "A surreal concept design merging {SUBJECT_A} and {CONCRETE_THING} into one coherent form."
+    placeholders: [SUBJECT_A, CONCRETE_THING]
+
+  pair_subject_b_concrete:
+    name: pair_subject_b_concrete
+    description: "pair: SUBJECT_B x CONCRETE_THING"
+    template: "A surreal concept design merging {SUBJECT_B} and {CONCRETE_THING} into one coherent form."
+    placeholders: [SUBJECT_B, CONCRETE_THING]
