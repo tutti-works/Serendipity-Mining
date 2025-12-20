@@ -186,6 +186,12 @@ def parse_args() -> argparse.Namespace:
         help="Resubmit only failed items (status=error/failed) in batch mode",
     )
     parser.add_argument(
+        "--axis-distribution",
+        choices=["weighted", "balanced"],
+        default=None,
+        help="Axis distribution mode for plan generation (weighted or balanced)",
+    )
+    parser.add_argument(
         "--batch-mime-type",
         type=str,
         default="jsonl",
@@ -384,6 +390,9 @@ def main() -> None:
     axis_templates = load_with_fallback("axis_templates.yaml", "axis_templates")
 
     axis_weights = cfg.get("axis_weights", {})
+    axis_distribution = str(cfg.get("axis_distribution", "weighted"))
+    if args.axis_distribution:
+        axis_distribution = args.axis_distribution
     target_count = int(cfg.get("target_count", cfg.get("standard_per_combo", 0) or 0))
     dedupe_mode = str(cfg.get("dedupe_mode", "strict"))
     tag_sampling = cfg.get("tag_sampling", {})
@@ -422,6 +431,7 @@ def main() -> None:
         target_count,
         global_suffix,
         axis_weights,
+        axis_distribution,
         dedupe_mode,
         args.seed,
         profile,
@@ -440,10 +450,22 @@ def main() -> None:
     filtered_plan = filter_plan(plan, axis=args.axis, bundle=None, count=args.count)
 
     manifest_cache = load_manifest_by_index(manifest_path)
-    completed_indices = {idx for idx, meta in manifest_cache.items() if is_completed(meta, images_root)}
+
+    def in_current_plan(meta: Dict[str, Any]) -> bool:
+        if not meta:
+            return False
+        if meta.get("plan_name") != plan_name:
+            return False
+        prof = meta.get("profile")
+        if prof and prof != profile:
+            return False
+        return True
+
+    manifest_cache_filtered = {idx: meta for idx, meta in manifest_cache.items() if in_current_plan(meta)}
+    completed_indices = {idx for idx, meta in manifest_cache_filtered.items() if is_completed(meta, images_root)}
     failed_indices = {
         idx
-        for idx, meta in manifest_cache.items()
+        for idx, meta in manifest_cache_filtered.items()
         if meta.get("status") in ("error", "failed", "failure") or meta.get("error")
     }
 
@@ -744,6 +766,7 @@ def main() -> None:
                             save_metadata(meta_dir, f"batch_{k_idx:04d}_{item['axis_id']}", metadata)
                             append_to_manifest(manifest_path, metadata)
                             manifest_cache[k_idx] = metadata
+                            manifest_cache_filtered[k_idx] = metadata
                             failed_new += 1
                             continue
                         try:
@@ -761,6 +784,7 @@ def main() -> None:
                             save_metadata(meta_dir, f"batch_{k_idx:04d}_{item['axis_id']}", metadata)
                             append_to_manifest(manifest_path, metadata)
                             manifest_cache[k_idx] = metadata
+                            manifest_cache_filtered[k_idx] = metadata
                             failed_new += 1
                             continue
                         extracted = {"final_image": img_bytes, "thought_images": []}
@@ -782,6 +806,7 @@ def main() -> None:
                         save_metadata(meta_dir, base_name, metadata)
                         append_to_manifest(manifest_path, metadata)
                         manifest_cache[k_idx] = metadata
+                        manifest_cache_filtered[k_idx] = metadata
                         completed_indices.add(k_idx)
                         success_new += 1
                 collected_names.add(bname)
@@ -794,7 +819,7 @@ def main() -> None:
                         "output_path": str(out_path),
                     },
                 )
-            summarize_counts(plan, manifest_cache)
+            summarize_counts(plan, manifest_cache_filtered)
             print(f"[collect] new_success={success_new} new_failed={failed_new}")
             return
 

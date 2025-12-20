@@ -8,7 +8,7 @@ axis_ids:
   - pair_subject_b_concrete
 global_prompt_suffix: "single main subject, minimal clutter, clean composition, plain background, no people, no text, no watermark"
 domain_injection: "none"
-target_count: 240
+target_count: 1200
 axis_weights:
   pair_obj_subject_a: 1.0
   pair_obj_subject_b: 1.0
@@ -16,6 +16,7 @@ axis_weights:
   pair_subject_a_b: 1.0
   pair_subject_a_concrete: 1.0
   pair_subject_b_concrete: 1.0
+axis_distribution: balanced
 dedupe_mode: "strict"
 tag_sampling:
   mode: uniform

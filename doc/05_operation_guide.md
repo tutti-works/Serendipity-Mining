@@ -59,6 +59,7 @@ profiles/{profile}/config.yaml で制御:
 - `global_prompt_suffix`: 全プロンプトに末尾付与（例: `single main subject, minimal clutter...`）
 - `tag_sampling`: タグ付き vocab のサンプリング方法（uniform/weighted/off をカテゴリごとに設定可能）
 - `sampling_controls`: `max_repeat_window` / `max_repeat_per_token` で直近/全体の重複を抑制
+- `axis_distribution`: `weighted`（確率抽選）/ `balanced`（軸ごとの件数を固定）
 
 ### 2.5 ドメイン注入
 `domain_injection` = `none` / `context` / `context_and_hints`  

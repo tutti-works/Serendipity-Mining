@@ -65,6 +65,7 @@ def create_slot_plan(
     target_count: int,
     global_suffix: str,
     axis_weights: Dict[str, float] | None,
+    axis_distribution: str | None,
     dedupe_mode: str,
     seed: int | None,
     profile: str,
@@ -76,6 +77,7 @@ def create_slot_plan(
     rng = Random(seed) if seed is not None else Random()
     plan: List[dict] = []
     seen: Set[str] = set()
+    axis_distribution = (axis_distribution or "weighted").lower()
     exclude_keys = exclude_keys or set()
     excluded_plans = excluded_plans or []
     tag_sampling = tag_sampling or {}
@@ -126,13 +128,9 @@ def create_slot_plan(
             return False
         return token in recent_tokens
 
-    weights = []
-    for ax in axis_ids:
-        weights.append(float(axis_weights.get(ax, 1.0) if axis_weights else 1.0))
+    weights = [float(axis_weights.get(ax, 1.0) if axis_weights else 1.0) for ax in axis_ids]
 
-    idx = 0
-    while len(plan) < target_count:
-        axis_id = weighted_choice(axis_ids, weights, rng)
+    def build_slots_for_axis(axis_id: str) -> tuple[Dict[str, str], Dict[str, str | None]]:
         tmpl = axis_templates[axis_id]
         placeholders = tmpl.get("placeholders") or []
         slots: Dict[str, str] = {}
@@ -161,17 +159,12 @@ def create_slot_plan(
                 recent_tokens.append(chosen)
             if max_repeat_per_token and token_counts[chosen] > max_repeat_per_token:
                 print(f"[warn] token '{chosen}' exceeded max_repeat_per_token={max_repeat_per_token}")
+        return slots, slot_tags
 
-        key = dedupe_key(axis_id, slots)
-        if key in exclude_keys:
-            continue
-        if dedupe_mode == "strict" and key in seen:
-            continue
-        seen.add(key)
-
+    def append_item(axis_id: str, slots: Dict[str, str], slot_tags: Dict[str, str | None], idx: int) -> None:
+        tmpl = axis_templates[axis_id]
         prompt_body = tmpl["template"].format(context="", h1="", h2="", **slots)
         final_prompt = f"{prompt_body} {global_suffix}".strip()
-
         plan.append(
             {
                 "index": idx,
@@ -185,7 +178,49 @@ def create_slot_plan(
                 "slot_tags": slot_tags or None,
             }
         )
-        idx += 1
+
+    idx = 0
+    if axis_distribution == "balanced":
+        total_weight = sum(weights)
+        if total_weight <= 0:
+            weights = [1.0 for _ in axis_ids]
+            total_weight = sum(weights)
+        raw = [target_count * w / total_weight for w in weights]
+        base = [int(x) for x in raw]
+        remainder = target_count - sum(base)
+        if remainder > 0:
+            frac = [(raw[i] - base[i], i) for i in range(len(axis_ids))]
+            frac.sort(key=lambda x: (-x[0], axis_ids[x[1]]))
+            for _, i in frac[:remainder]:
+                base[i] += 1
+        axis_queue: List[str] = []
+        for axis_id, count in zip(axis_ids, base):
+            axis_queue.extend([axis_id] * count)
+        rng.shuffle(axis_queue)
+        for axis_id in axis_queue:
+            while True:
+                slots, slot_tags = build_slots_for_axis(axis_id)
+                key = dedupe_key(axis_id, slots)
+                if key in exclude_keys:
+                    continue
+                if dedupe_mode == "strict" and key in seen:
+                    continue
+                seen.add(key)
+                append_item(axis_id, slots, slot_tags, idx)
+                idx += 1
+                break
+    else:
+        while len(plan) < target_count:
+            axis_id = weighted_choice(axis_ids, weights, rng)
+            slots, slot_tags = build_slots_for_axis(axis_id)
+            key = dedupe_key(axis_id, slots)
+            if key in exclude_keys:
+                continue
+            if dedupe_mode == "strict" and key in seen:
+                continue
+            seen.add(key)
+            append_item(axis_id, slots, slot_tags, idx)
+            idx += 1
     return plan
 
 
@@ -203,6 +238,7 @@ def load_plan(
     target_count: int,
     global_suffix: str,
     axis_weights: Dict[str, float] | None,
+    axis_distribution: str | None,
     dedupe_mode: str,
     seed: int | None,
     profile: str,
@@ -222,6 +258,7 @@ def load_plan(
         target_count,
         global_suffix,
         axis_weights,
+        axis_distribution,
         dedupe_mode,
         seed,
         profile,
