@@ -128,12 +128,38 @@ def download_to_path(client: object, file_name: str, out_path: Path, batch_name:
             print(
                 f"[error] download failed (path) batch={batch_name} chunk={chunk_id} file={file_name}: {exc}"
             )
-            return False
     except Exception as exc:  # noqa: BLE001
         print(
             f"[error] download failed (path) batch={batch_name} chunk={chunk_id} file={file_name}: {exc}"
         )
-        return False
+    return False
+
+
+def delete_output_file(client: object, output_name: str, batch_name: str) -> bool:
+    candidates = [output_name]
+    if output_name.startswith("files/"):
+        candidates.append(output_name.replace("files/", "", 1))
+    last_err: Exception | None = None
+    for name in candidates:
+        try:
+            client.files.delete(name=name)
+            print(f"[delete] output {output_name} (batch={batch_name})")
+            return True
+        except TypeError as exc:
+            last_err = exc
+            try:
+                client.files.delete(file=name)
+                print(f"[delete] output {output_name} (batch={batch_name})")
+                return True
+            except Exception as exc2:  # noqa: BLE001
+                last_err = exc2
+                continue
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            continue
+    if last_err:
+        print(f"[warn] failed to delete output {output_name} (batch={batch_name}): {last_err}")
+    return False
 
 
 def upload_jsonl(client: object, input_path: Path, *, display_name: str | None, mime_type: str):
@@ -201,6 +227,11 @@ def parse_args() -> argparse.Namespace:
         "--batch-collect-limit",
         type=int,
         help="Max number of completed batch jobs to collect in one run",
+    )
+    parser.add_argument(
+        "--batch-delete-output",
+        action="store_true",
+        help="Delete remote batch output file after successful collect",
     )
     return parser.parse_args()
 
@@ -809,6 +840,8 @@ def main() -> None:
                         manifest_cache_filtered[k_idx] = metadata
                         completed_indices.add(k_idx)
                         success_new += 1
+                if args.batch_delete_output:
+                    delete_output_file(client, output_name, bname)
                 collected_names.add(bname)
                 append_collected(
                     collected_path,

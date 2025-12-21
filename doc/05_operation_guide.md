@@ -166,6 +166,7 @@ python run.py --profile 4cats --plan-name prod --mode batch --batch-action colle
 - `--batch-request-case` で request のキー表記（snake/camel）を切り替え可能（デフォルトは camel）。
 - `--batch-collect-limit` で1回の collect で回収するジョブ数を制限可能。
 - `--batch-resubmit-failed` を付けると、manifest上で失敗したものだけを再送（成功は除外）。
+- `--batch-delete-output` を付けると、collect 後にリモート output ファイル削除を試行（失敗する場合は警告ログ）。
 - 入力JSONL 1行のスキーマ: `{"key": "<profile>:<plan_name>:<index>", "request": <GenerateContentRequest>}`  
   `key` は chunk 跨ぎでも一意。
 
