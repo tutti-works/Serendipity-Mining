@@ -6,7 +6,7 @@ import random
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -23,61 +23,80 @@ AXIS_WORDS = {
 
 
 class RateRequest(BaseModel):
-    index: int
+    index: Optional[int] = None
     rating: int
+    plan_name: Optional[str] = None
+    uid: Optional[str] = None
 
 
 class RaterState:
-    def __init__(self, profile: str, plan_name: str, output_dir: Path) -> None:
+    def __init__(self, profile: str, plan_names: List[str], output_dir: Path) -> None:
         self.profile = profile
-        self.plan_name = plan_name
+        self.plan_names = plan_names
+        self.primary_plan = plan_names[0] if plan_names else "explore"
         self.output_dir = output_dir
-        self.plan_path = output_dir / f"{plan_name}.jsonl"
         self.manifest_path = output_dir / "manifest.jsonl"
         self.images_root = output_dir / "images"
-        self.ratings_path = output_dir / "ratings" / f"{plan_name}.jsonl"
+        self.ratings_paths = {
+            name: output_dir / "ratings" / f"{name}.jsonl" for name in plan_names
+        }
         self.lock = threading.Lock()
         self.ratings_lock = threading.Lock()
         self.default_seed = random.randint(0, 1_000_000)
-        self.plan_by_index: Dict[int, dict] = {}
+        self.plan_by_key: Dict[str, dict] = {}
         self.items: List[dict] = []
-        self.items_by_index: Dict[int, dict] = {}
-        self.ratings: Dict[int, int] = {}
+        self.items_by_key: Dict[str, dict] = {}
+        self.ratings: Dict[str, int] = {}
+        self.tag_options: Dict[str, List[str]] = {}
         self.load_all()
 
     def load_all(self) -> None:
         with self.lock:
-            self.plan_by_index = self.load_plan()
+            self.plan_by_key = self.load_plans()
             self.ratings = self.load_ratings()
             self.items = self.load_items()
-            self.items_by_index = {item["index"]: item for item in self.items}
+            self.items_by_key = {item["uid"]: item for item in self.items}
+            self.tag_options = self.build_tag_options()
 
-    def load_plan(self) -> Dict[int, dict]:
-        if not self.plan_path.exists():
-            raise FileNotFoundError(f"plan not found: {self.plan_path}")
-        mapping: Dict[int, dict] = {}
-        for line in self.plan_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                data = json.loads(line)
-                mapping[int(data["index"])] = data
-            except Exception:
-                continue
+    def load_plans(self) -> Dict[str, dict]:
+        mapping: Dict[str, dict] = {}
+        for plan_name in self.plan_names:
+            plan_path = self.output_dir / f"{plan_name}.jsonl"
+            if not plan_path.exists():
+                raise FileNotFoundError(f"plan not found: {plan_path}")
+            for line in plan_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    idx = int(data["index"])
+                except Exception:
+                    continue
+                key = f"{plan_name}:{idx}"
+                mapping[key] = data
         return mapping
 
     def load_ratings(self) -> Dict[int, int]:
-        if not self.ratings_path.exists():
-            return {}
-        mapping: Dict[int, int] = {}
-        for line in self.ratings_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
+        mapping: Dict[str, int] = {}
+        for plan_name, ratings_path in self.ratings_paths.items():
+            if not ratings_path.exists():
                 continue
-            try:
-                data = json.loads(line)
-                mapping[int(data["index"])] = int(data["rating"])
-            except Exception:
-                continue
+            for line in ratings_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:
+                    continue
+                rec_plan = data.get("plan_name") or plan_name
+                if rec_plan not in self.plan_names:
+                    continue
+                idx = data.get("index")
+                rating = data.get("rating")
+                if not isinstance(idx, int) or rating not in (0, 1, 2):
+                    continue
+                key = f"{rec_plan}:{idx}"
+                mapping[key] = int(rating)
         return mapping
 
     def build_words(self, axis_id: str, slots: dict) -> str:
@@ -92,13 +111,21 @@ class RaterState:
                 words.append(str(slots[key]))
         return " x ".join(words)
 
-    def is_preferred_filename(self, filename: str) -> bool:
-        return filename.startswith(f"batch_{self.plan_name}_")
+    def is_preferred_filename(self, filename: str, plan_name: str) -> bool:
+        return filename.startswith(f"batch_{plan_name}_")
+
+    def build_tag_options(self) -> Dict[str, List[str]]:
+        tags_by_cat: Dict[str, set] = {}
+        for item in self.items:
+            slot_tags = item.get("slot_tags") or {}
+            for cat, tag in slot_tags.items():
+                tags_by_cat.setdefault(cat, set()).add(tag)
+        return {cat: sorted(tags) for cat, tags in tags_by_cat.items()}
 
     def load_items(self) -> List[dict]:
         if not self.manifest_path.exists():
             return []
-        items_by_index: Dict[int, dict] = {}
+        items_by_key: Dict[str, dict] = {}
         for line in self.manifest_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -106,7 +133,8 @@ class RaterState:
                 rec = json.loads(line)
             except Exception:
                 continue
-            if rec.get("plan_name") != self.plan_name:
+            plan_name = rec.get("plan_name")
+            if plan_name not in self.plan_names:
                 continue
             if rec.get("status") != "success":
                 continue
@@ -118,7 +146,10 @@ class RaterState:
             if not img_path.exists():
                 continue
             index = rec.get("index")
-            plan_item = self.plan_by_index.get(index)
+            if not isinstance(index, int):
+                continue
+            key = f"{plan_name}:{index}"
+            plan_item = self.plan_by_key.get(key)
             if not plan_item:
                 continue
             words = self.build_words(axis_id, plan_item.get("slots") or {})
@@ -128,51 +159,94 @@ class RaterState:
                 "image_url": f"/images/{axis_id}/{fname}",
                 "words": words,
                 "final_image_filename": fname,
+                "slot_tags": plan_item.get("slot_tags") or {},
+                "plan_name": plan_name,
+                "uid": key,
             }
-            existing = items_by_index.get(index)
+            existing = items_by_key.get(key)
             if not existing:
-                items_by_index[index] = item
+                items_by_key[key] = item
                 continue
-            existing_pref = self.is_preferred_filename(existing["final_image_filename"])
-            new_pref = self.is_preferred_filename(fname)
+            existing_pref = self.is_preferred_filename(existing["final_image_filename"], plan_name)
+            new_pref = self.is_preferred_filename(fname, plan_name)
             if new_pref and not existing_pref:
-                items_by_index[index] = item
+                items_by_key[key] = item
                 continue
             if new_pref == existing_pref:
-                items_by_index[index] = item
-        return list(items_by_index.values())
+                items_by_key[key] = item
+        return list(items_by_key.values())
 
-    def ordered_items(self, seed: Optional[int]) -> List[dict]:
-        rated_items = [item for item in self.items if item["index"] in self.ratings]
-        unrated_items = [item for item in self.items if item["index"] not in self.ratings]
-        rated_items.sort(key=lambda x: x["index"])
+    def ordered_items(self, seed: Optional[int], items: Optional[List[dict]] = None) -> List[dict]:
+        base = items if items is not None else self.items
+        rated_items = [item for item in base if item["uid"] in self.ratings]
+        unrated_items = [item for item in base if item["uid"] not in self.ratings]
+        rated_items.sort(key=lambda x: (x["plan_name"], x["index"]))
         use_seed = self.default_seed if seed is None else seed
         rng = random.Random(use_seed)
         rng.shuffle(unrated_items)
         return rated_items + unrated_items
 
-    def write_rating(self, index: int, rating: int) -> dict:
-        item = self.items_by_index.get(index)
+    def filtered_items(self, tag_filter: Optional[str], rating_filter: Optional[str]) -> List[dict]:
+        items = list(self.items)
+        if tag_filter and tag_filter != "all":
+            if ":" in tag_filter:
+                cat, tag = tag_filter.split(":", 1)
+                items = [item for item in items if item.get("slot_tags", {}).get(cat) == tag]
+        if rating_filter and rating_filter != "all":
+            if rating_filter == "unrated":
+                items = [item for item in items if item["uid"] not in self.ratings]
+            else:
+                try:
+                    rating_val = int(rating_filter)
+                except ValueError:
+                    rating_val = None
+                if rating_val is not None:
+                    items = [
+                        item
+                        for item in items
+                        if self.ratings.get(item["uid"]) == rating_val
+                    ]
+        return items
+
+    def resolve_key(self, index: Optional[int], plan_name: Optional[str], uid: Optional[str]) -> Optional[str]:
+        if uid:
+            return uid
+        if plan_name and index is not None:
+            return f"{plan_name}:{index}"
+        if len(self.plan_names) == 1 and index is not None:
+            return f"{self.primary_plan}:{index}"
+        return None
+
+    def write_rating(self, index: Optional[int], rating: int, plan_name: Optional[str], uid: Optional[str]) -> dict:
+        key = self.resolve_key(index, plan_name, uid)
+        if not key:
+            raise KeyError("missing key")
+        item = self.items_by_key.get(key)
         if not item:
-            raise KeyError(index)
+            raise KeyError(key)
+        target_plan = item["plan_name"]
         record = {
             "rated_at": datetime.utcnow().isoformat(),
             "profile": self.profile,
-            "plan_name": self.plan_name,
-            "index": index,
+            "plan_name": target_plan,
+            "index": item["index"],
             "axis_id": item["axis_id"],
             "rating": rating,
             "words": item["words"],
         }
         with self.ratings_lock:
-            self.ratings_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.ratings_path, "a", encoding="utf-8") as f:
+            ratings_path = self.ratings_paths.get(target_plan)
+            if not ratings_path:
+                ratings_path = self.output_dir / "ratings" / f"{target_plan}.jsonl"
+                self.ratings_paths[target_plan] = ratings_path
+            ratings_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(ratings_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            self.ratings[index] = rating
+            self.ratings[key] = rating
         return record
 
     def rating_counts(self) -> tuple[int, int]:
-        rated = sum(1 for idx in self.ratings.keys() if idx in self.items_by_index)
+        rated = sum(1 for key in self.ratings.keys() if key in self.items_by_key)
         total = len(self.items)
         return rated, total
 
@@ -186,18 +260,27 @@ def build_app(state: RaterState) -> FastAPI:
         return HTML_TEMPLATE
 
     @app.get("/api/page")
-    def api_page(offset: int = 0, limit: int = 4, seed: Optional[int] = None):
-        items = state.ordered_items(seed)
+    def api_page(
+        offset: int = 0,
+        limit: int = 4,
+        seed: Optional[int] = None,
+        tag: Optional[str] = None,
+        rating: Optional[str] = None,
+    ):
+        filtered = state.filtered_items(tag, rating)
+        items = state.ordered_items(seed, filtered)
         page = items[offset : offset + limit]
         payload = []
         for item in page:
             payload.append(
                 {
                     "index": item["index"],
+                    "plan_name": item["plan_name"],
+                    "uid": item["uid"],
                     "axis_id": item["axis_id"],
                     "image_url": item["image_url"],
                     "words": item["words"],
-                    "rating": state.ratings.get(item["index"]),
+                    "rating": state.ratings.get(item["uid"]),
                 }
             )
         rated_count, total_count = state.rating_counts()
@@ -206,6 +289,8 @@ def build_app(state: RaterState) -> FastAPI:
             "total": len(items),
             "offset": offset,
             "limit": limit,
+            "filter_tag": tag,
+            "filter_rating": rating,
             "rated_count": rated_count,
             "total_count": total_count,
         }
@@ -215,7 +300,7 @@ def build_app(state: RaterState) -> FastAPI:
         if req.rating not in (0, 1, 2):
             raise HTTPException(status_code=400, detail="rating must be 0, 1, or 2")
         try:
-            record = state.write_rating(req.index, req.rating)
+            record = state.write_rating(req.index, req.rating, req.plan_name, req.uid)
         except KeyError:
             raise HTTPException(status_code=404, detail="index not found")
         rated_count, total_count = state.rating_counts()
@@ -224,8 +309,8 @@ def build_app(state: RaterState) -> FastAPI:
     @app.get("/api/report")
     def api_report():
         axis_stats: Dict[str, Dict[str, int]] = {}
-        for idx, rating in state.ratings.items():
-            item = state.items_by_index.get(idx)
+        for key, rating in state.ratings.items():
+            item = state.items_by_key.get(key)
             if not item:
                 continue
             axis_id = item["axis_id"]
@@ -238,6 +323,10 @@ def build_app(state: RaterState) -> FastAPI:
             score = (stats["2"] / total) if total else 0.0
             report[axis_id] = {"counts": stats, "score": score}
         return JSONResponse(report)
+
+    @app.get("/api/filters")
+    def api_filters():
+        return {"tags": state.tag_options}
 
     @app.post("/api/reload")
     def api_reload():
@@ -264,11 +353,30 @@ HTML_TEMPLATE = """<!doctype html>
     .rating { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #fff;
               font-size: 28px; padding: 4px 8px; border-radius: 6px; }
     .hint { font-size: 12px; color: #aaa; }
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .controls label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc; }
+    .controls select { background: #0f0f0f; color: #eee; border: 1px solid #333; padding: 2px 6px; }
   </style>
 </head>
 <body>
     <div class="topbar">
     <div>Rater (0/1/2)</div>
+    <div class="controls">
+      <label>Tag
+        <select id="tagFilter">
+          <option value="all">all</option>
+        </select>
+      </label>
+      <label>Rating
+        <select id="ratingFilter">
+          <option value="all">all</option>
+          <option value="unrated">unrated</option>
+          <option value="0">0</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+        </select>
+      </label>
+    </div>
     <div id="status" class="hint">rated 0 / 0</div>
     <div class="hint">Arrows: move, 0/1/2: rate, n/space: next, p: prev, r: reload</div>
   </div>
@@ -279,16 +387,22 @@ HTML_TEMPLATE = """<!doctype html>
     let selected = 0;
     const params = new URLSearchParams(window.location.search);
     const seed = params.get("seed");
+    let currentTotal = 0;
 
     async function fetchPage() {
       const url = new URL("/api/page", window.location.origin);
       url.searchParams.set("offset", offset);
       url.searchParams.set("limit", limit);
+      const tag = document.getElementById("tagFilter").value;
+      const rating = document.getElementById("ratingFilter").value;
+      if (tag) url.searchParams.set("tag", tag);
+      if (rating) url.searchParams.set("rating", rating);
       if (seed) url.searchParams.set("seed", seed);
       const res = await fetch(url);
       const data = await res.json();
       render(data.items);
-      updateStatus(data.rated_count, data.total_count);
+      currentTotal = data.total || 0;
+      updateStatus(data.rated_count, data.total_count, currentTotal);
       if (data.items.length === 0 && offset > 0) {
         offset = Math.max(0, offset - limit);
         return fetchPage();
@@ -302,6 +416,8 @@ HTML_TEMPLATE = """<!doctype html>
         const tile = document.createElement("div");
         tile.className = "tile" + (idx === selected ? " selected" : "");
         tile.dataset.index = item.index;
+        tile.dataset.plan = item.plan_name;
+        tile.dataset.uid = item.uid;
         tile.dataset.pos = idx;
         const img = document.createElement("img");
         img.src = item.image_url;
@@ -336,10 +452,12 @@ HTML_TEMPLATE = """<!doctype html>
       if (tiles.length === 0) return;
       const tile = tiles[selected];
       const index = parseInt(tile.dataset.index, 10);
+      const planName = tile.dataset.plan;
+      const uid = tile.dataset.uid;
       const res = await fetch("/api/rate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ index, rating: value }),
+        body: JSON.stringify({ index, rating: value, plan_name: planName, uid }),
       });
       if (res.ok) {
         const payload = await res.json();
@@ -347,7 +465,7 @@ HTML_TEMPLATE = """<!doctype html>
         badge.className = "rating";
         badge.textContent = value;
         tile.appendChild(badge);
-        updateStatus(payload.rated_count, payload.total_count);
+        updateStatus(payload.rated_count, payload.total_count, currentTotal);
         moveSelection(1);
         if (allRated()) nextPage();
       }
@@ -379,11 +497,39 @@ HTML_TEMPLATE = """<!doctype html>
       fetchPage();
     }
 
-    function updateStatus(ratedCount, totalCount) {
+    function updateStatus(ratedCount, totalCount, filteredTotal) {
       const el = document.getElementById("status");
       if (!el) return;
-      el.textContent = `rated ${ratedCount} / ${totalCount}`;
+      const extra = filteredTotal !== undefined ? ` | filtered ${filteredTotal}` : "";
+      el.textContent = `rated ${ratedCount} / ${totalCount}${extra}`;
     }
+
+    async function loadFilters() {
+      const res = await fetch("/api/filters");
+      if (!res.ok) return;
+      const data = await res.json();
+      const select = document.getElementById("tagFilter");
+      const tags = data.tags || {};
+      for (const cat of Object.keys(tags).sort()) {
+        for (const tag of tags[cat]) {
+          const opt = document.createElement("option");
+          opt.value = `${cat}:${tag}`;
+          opt.textContent = `${cat}:${tag}`;
+          select.appendChild(opt);
+        }
+      }
+    }
+
+    document.getElementById("tagFilter").addEventListener("change", () => {
+      offset = 0;
+      selected = 0;
+      fetchPage();
+    });
+    document.getElementById("ratingFilter").addEventListener("change", () => {
+      offset = 0;
+      selected = 0;
+      fetchPage();
+    });
 
     document.addEventListener("keydown", (e) => {
       if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
@@ -408,7 +554,7 @@ HTML_TEMPLATE = """<!doctype html>
       }
     });
 
-    fetchPage();
+    loadFilters().then(fetchPage);
   </script>
 </body>
 </html>
@@ -419,6 +565,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serendipity Mining local rater")
     parser.add_argument("--profile", type=str, default="4cats", help="Profile name (e.g., 3labs, 4cats)")
     parser.add_argument("--plan-name", type=str, default="explore", help="Plan name (e.g., explore)")
+    parser.add_argument(
+        "--plan-names",
+        type=str,
+        default="",
+        help="Comma-separated plan names to load together (overrides --plan-name).",
+    )
     parser.add_argument("--output", type=str, default="./out", help="Output root (default: ./out)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host")
     parser.add_argument("--port", type=int, default=8000, help="Port")
@@ -426,7 +578,11 @@ def main() -> None:
 
     output_root = Path(args.output)
     output_dir = output_root if output_root.name == args.profile else output_root / args.profile
-    state = RaterState(args.profile, args.plan_name, output_dir)
+    if args.plan_names:
+        plan_names = [p.strip() for p in args.plan_names.split(",") if p.strip()]
+    else:
+        plan_names = [args.plan_name]
+    state = RaterState(args.profile, plan_names, output_dir)
     app = build_app(state)
 
     import uvicorn
