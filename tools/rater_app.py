@@ -92,10 +92,13 @@ class RaterState:
                 words.append(str(slots[key]))
         return " x ".join(words)
 
+    def is_preferred_filename(self, filename: str) -> bool:
+        return filename.startswith(f"batch_{self.plan_name}_")
+
     def load_items(self) -> List[dict]:
         if not self.manifest_path.exists():
             return []
-        items: List[dict] = []
+        items_by_index: Dict[int, dict] = {}
         for line in self.manifest_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -119,23 +122,34 @@ class RaterState:
             if not plan_item:
                 continue
             words = self.build_words(axis_id, plan_item.get("slots") or {})
-            items.append(
-                {
-                    "index": index,
-                    "axis_id": axis_id,
-                    "image_url": f"/images/{axis_id}/{fname}",
-                    "words": words,
-                    "final_image_filename": fname,
-                }
-            )
-        return items
+            item = {
+                "index": index,
+                "axis_id": axis_id,
+                "image_url": f"/images/{axis_id}/{fname}",
+                "words": words,
+                "final_image_filename": fname,
+            }
+            existing = items_by_index.get(index)
+            if not existing:
+                items_by_index[index] = item
+                continue
+            existing_pref = self.is_preferred_filename(existing["final_image_filename"])
+            new_pref = self.is_preferred_filename(fname)
+            if new_pref and not existing_pref:
+                items_by_index[index] = item
+                continue
+            if new_pref == existing_pref:
+                items_by_index[index] = item
+        return list(items_by_index.values())
 
     def ordered_items(self, seed: Optional[int]) -> List[dict]:
-        order = list(self.items)
+        rated_items = [item for item in self.items if item["index"] in self.ratings]
+        unrated_items = [item for item in self.items if item["index"] not in self.ratings]
+        rated_items.sort(key=lambda x: x["index"])
         use_seed = self.default_seed if seed is None else seed
         rng = random.Random(use_seed)
-        rng.shuffle(order)
-        return order
+        rng.shuffle(unrated_items)
+        return rated_items + unrated_items
 
     def write_rating(self, index: int, rating: int) -> dict:
         item = self.items_by_index.get(index)
