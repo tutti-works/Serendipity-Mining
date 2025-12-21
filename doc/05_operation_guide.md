@@ -238,6 +238,8 @@ python tools/files_manager.py --delete files/xxxx --yes
 python tools/files_manager.py --delete-older-hours 48 --yes
 python tools/files_manager.py --delete-display-prefix 4cats-explore --yes
 python tools/files_manager.py --delete-older-hours 48 --delete-display-prefix 4cats-explore --yes
+python tools/files_manager.py --list-batch-outputs --profile 4cats_pairmix --plan-name explore_pairmix_r3
 ```
 - `--delete-display-prefix` は display_name の前方一致で削除対象を絞り込み。
 - `--yes` がない場合は候補表示のみ、削除はしない。
+- Batch output file metadata may be unavailable; use `--list-batch-outputs` to show names, and check local `out/{profile}/batch_outputs/*.jsonl` sizes if needed.
